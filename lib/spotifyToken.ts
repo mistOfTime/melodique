@@ -23,8 +23,11 @@ export async function getSpotifyToken(): Promise<string | null> {
         "Authorization": `Basic ${Buffer.from(`${clientId}:${clientSecret}`).toString("base64")}`,
       },
       body: "grant_type=client_credentials",
+      // Use no-store only on server — Next.js 14 requires this pattern
       cache: "no-store",
-    });
+      // next option overrides cache behaviour for static pages
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    } as any);
 
     if (!res.ok) {
       const err = await res.text();

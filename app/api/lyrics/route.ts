@@ -1,3 +1,4 @@
+export const dynamic = "force-dynamic";
 /**
  * Lyrics API — multi-source with aggressive fallback chain
  *
