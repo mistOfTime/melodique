@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useReducer, useCallback, useEffect, useRef } from "react";
 import { Track } from "./track";
-import { loadLibraryFromFirestore, debouncedSave, subscribeLibrary } from "./firestoreSync";
+import { loadLibraryFromFirestore, saveLibraryToFirestore, debouncedSave, subscribeLibrary } from "./firestoreSync";
 import { auth } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 
@@ -76,6 +76,47 @@ function mergeState(base: PlaylistState, remote: Partial<PlaylistState>): Playli
     followedArtists: remote.followedArtists ?? base.followedArtists,
     savedAlbums:     remote.savedAlbums     ?? base.savedAlbums,
   };
+}
+
+// Merge two arrays, deduplicating by a key field
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function mergeArrays<T extends Record<string, any>>(a: T[] = [], b: T[] = [], key: string): T[] {
+  const map = new Map<string, T>();
+  // b (local) first, then a (remote) — remote wins on conflict
+  [...b, ...a].forEach(item => {
+    const k = item[key];
+    if (k !== undefined && k !== null) map.set(String(k), item);
+  });
+  return Array.from(map.values());
+}
+
+// Merge playlists — merge track lists within each playlist too
+function mergePlaylists(remote: Playlist[] = [], local: Playlist[] = []): Playlist[] {
+  const map = new Map<string, Playlist>();
+  // Start with local
+  local.forEach(p => map.set(p.id, p));
+  // Overlay remote — merge tracks within each playlist
+  remote.forEach(rp => {
+    const lp = map.get(rp.id);
+    if (lp) {
+      // Merge tracks from both
+      const trackMap = new Map<string, Track>();
+      [...lp.tracks, ...rp.tracks].forEach(t => { if (!trackMap.has(t.id)) trackMap.set(t.id, t); });
+      map.set(rp.id, {
+        ...rp,
+        tracks: Array.from(trackMap.values()),
+        cover:  rp.cover || lp.cover,
+      });
+    } else {
+      map.set(rp.id, rp);
+    }
+  });
+  // Sort: liked first, then by createdAt
+  return Array.from(map.values()).sort((a, b) => {
+    if (a.id === "liked") return -1;
+    if (b.id === "liked") return 1;
+    return a.createdAt - b.createdAt;
+  });
 }
 
 function reducer(state: PlaylistState, action: Action): PlaylistState {
@@ -189,18 +230,35 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
 
       if (fb) {
         uidRef.current = fb.uid;
-        // Load from Firestore (cloud takes priority over local)
+        // Load from Firestore first
         const remote = await loadLibraryFromFirestore(fb.uid);
+        const local  = localLoad();
+
         if (remote) {
-          dispatch({ type: "HYDRATE", payload: remote });
+          // Firestore exists — merge: combine data from both sources
+          const merged: PlaylistState = {
+            playlists:       mergePlaylists(remote.playlists,       local.playlists),
+            likedTracks:     mergeArrays(remote.likedTracks,     local.likedTracks,     "id"),
+            followedArtists: mergeArrays(remote.followedArtists, local.followedArtists, "id"),
+            savedAlbums:     mergeArrays(remote.savedAlbums,     local.savedAlbums,     "id"),
+          };
+          dispatch({ type: "HYDRATE", payload: merged });
+          // Upload the merged result back to Firestore so both are in sync
+          await saveLibraryToFirestore(fb.uid, merged);
+        } else {
+          // No Firestore data yet — upload local data to Firestore
+          dispatch({ type: "HYDRATE", payload: local });
+          if (local.likedTracks.length > 0 || local.playlists.length > 1) {
+            await saveLibraryToFirestore(fb.uid, local);
+          }
         }
         hydrated.current = true;
-        // Subscribe to real-time changes (from other devices)
+        // Subscribe to real-time changes from other devices
         unsubFirestore.current = subscribeLibrary(fb.uid, (data) => {
           dispatch({ type: "HYDRATE", payload: data });
         });
       } else {
-        uidRef.current = null;
+        uidRef.current   = null;
         hydrated.current = false;
       }
     });
