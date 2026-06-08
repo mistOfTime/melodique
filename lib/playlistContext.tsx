@@ -160,7 +160,7 @@ interface PlaylistContextValue {
   removeFromPlaylist: (playlistId: string, trackId: string) => void;
   updatePlaylistCover: (playlistId: string, cover: string) => void;
   toggleLiked: (track: Track) => void;
-  isLiked: (trackId: string) => boolean;
+  isLiked: (trackId: string, trackName?: string, artistName?: string) => boolean;
   followArtist: (artist: FollowedArtist) => void;
   unfollowArtist: (id: string) => void;
   isFollowing: (id: string) => boolean;
@@ -191,8 +191,22 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   const addToPlaylist      = useCallback((playlistId: string, track: Track) => dispatch({ type: "ADD_TO_PLAYLIST", payload: { playlistId, track } }), []);
   const removeFromPlaylist = useCallback((playlistId: string, trackId: string) => dispatch({ type: "REMOVE_FROM_PLAYLIST", payload: { playlistId, trackId } }), []);
   const updatePlaylistCover = useCallback((playlistId: string, cover: string) => dispatch({ type: "UPDATE_COVER", payload: { playlistId, cover } }), []);
-  const toggleLiked        = useCallback((track: Track) => dispatch({ type: "TOGGLE_LIKED", payload: track }), []);
-  const isLiked            = useCallback((trackId: string) => state.likedTracks.some(t => t.id === trackId), [state.likedTracks]);
+  const toggleLiked = useCallback((track: Track) => dispatch({ type: "TOGGLE_LIKED", payload: track }), []);
+
+  // isLiked — check by id first, fallback to name+artist (handles iTunes vs Spotify ID mismatch)
+  const isLiked = useCallback((trackId: string, trackName?: string, artistName?: string) => {
+    if (state.likedTracks.some(t => t.id === trackId)) return true;
+    // Fuzzy match by name+artist for cross-source deduplication
+    if (trackName && artistName) {
+      const name   = trackName.toLowerCase().trim();
+      const artist = artistName.toLowerCase().trim();
+      return state.likedTracks.some(t =>
+        t.trackName.toLowerCase().trim() === name &&
+        t.artistName.toLowerCase().trim() === artist
+      );
+    }
+    return false;
+  }, [state.likedTracks]);
   const followArtist       = useCallback((artist: FollowedArtist) => dispatch({ type: "FOLLOW_ARTIST", payload: artist }), []);
   const unfollowArtist     = useCallback((id: string) => dispatch({ type: "UNFOLLOW_ARTIST", payload: id }), []);
   const isFollowing        = useCallback((id: string) => state.followedArtists.some(a => a.id === id), [state.followedArtists]);

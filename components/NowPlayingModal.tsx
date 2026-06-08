@@ -73,7 +73,7 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
 
   const currentTime = state.progress * state.duration;
   const isLoading   = state.ytStatus === "loading";
-  const liked       = isLiked(currentSong.id);
+  const liked       = isLiked(currentSong.id, currentSong.trackName, currentSong.artistName);
   const coverUrl    = getArtwork(currentSong.artworkUrl100, 600);
 
   return (

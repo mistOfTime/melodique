@@ -64,10 +64,10 @@ interface PlayRecord {
   lastTs:     number;
 }
 
-export function recordPlay(track: Track) {
+export function recordPlay(track: Track, fromUser = false) {
   if (typeof window === "undefined") return;
   try {
-    // Update artist play counts (aggregated, not a raw list)
+    // Update artist play counts
     const raw     = localStorage.getItem(LISTEN_HISTORY_KEY);
     const records: Record<string, PlayRecord> = raw ? JSON.parse(raw) : {};
     const key     = track.artistName.toLowerCase().trim();
@@ -87,11 +87,13 @@ export function recordPlay(track: Track) {
     }
     localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(records));
 
-    // Also save to recent songs list (last 50)
-    const recentRaw  = localStorage.getItem(RECENT_SONGS_KEY);
-    const recent: Track[] = recentRaw ? JSON.parse(recentRaw) : [];
-    const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, 50);
-    localStorage.setItem(RECENT_SONGS_KEY, JSON.stringify(deduped));
+    // Only save to recent songs when user explicitly plays (not radio auto-queue)
+    if (fromUser) {
+      const recentRaw  = localStorage.getItem(RECENT_SONGS_KEY);
+      const recent: Track[] = recentRaw ? JSON.parse(recentRaw) : [];
+      const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, 50);
+      localStorage.setItem(RECENT_SONGS_KEY, JSON.stringify(deduped));
+    }
   } catch { /* ignore */ }
 }
 
@@ -320,8 +322,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   // Fetch YouTube ID when song changes + record play
   useEffect(() => {
     if (!currentSong) return;
-    // Record this play in listening history
-    recordPlay(currentSong);
+    // Only record as "user played" if it came from a SET_QUEUE or PLAY_SONG, not from radio ADD_TO_QUEUE
+    // We detect this by checking if it's in the original queue batch (index <= queue length at SET_QUEUE time)
+    recordPlay(currentSong, state.currentIndex < state.queue.length - 20);
     dispatch({ type: "SET_YT_STATUS", payload: "loading" });
     fetchYouTubeId(currentSong.artistName, currentSong.trackName, currentSong.id)
       .then(id => dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: id ? "ready" : "error" } }));
@@ -365,51 +368,73 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const artist = currentSong.artistName ?? "";
     const lang   = /[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
 
-    // Build genre-specific query — Japanese artists stay in Japanese music
-    const GENRE_MAP: Record<string, string[]> = {
-      "J-Pop":          ["jpop japanese pop", "j-pop 2025"],
-      "J-Rock":         ["japanese rock", "jrock bands"],
-      "Anime":          ["anime ost", "anime soundtrack"],
-      "K-Pop":          ["kpop 2025", "korean pop hits"],
-      "Metal":          ["heavy metal", "metal bands 2025"],
-      "Nu-Metal":       ["nu metal", "korn linkin park"],
-      "Hard Rock":      ["hard rock 2025", "rock classics"],
-      "Alternative":    ["alternative rock indie 2025"],
-      "Indie Rock":     ["indie rock bands"],
-      "Rock":           ["rock hits 2025"],
-      "Hip-Hop/Rap":    ["hip hop rap 2025"],
-      "Hip-Hop":        ["hip hop 2025"],
-      "Rap":            ["trap rap 2025"],
-      "R&B/Soul":       ["rnb soul 2025"],
-      "Electronic":     ["electronic dance 2025"],
-      "Latin":          ["latin reggaeton 2025"],
-      "Pop":            ["pop hits 2025"],
-      "Indie Pop":      ["indie pop 2025"],
-      "Lo-Fi":          ["lofi chill beats"],
-      "Classical":      ["classical orchestra"],
-      "Jazz":           ["jazz 2025"],
-      "Country":        ["country hits 2025"],
-      "Reggae":         ["reggae dancehall"],
-      "Drill":          ["drill 2025"],
-      "Metalcore":      ["metalcore bands"],
-      "Emo":            ["emo music bands"],
+    // Build a similarity-based query — "fans also like" approach
+    // Use both artist name AND genre to find similar popular songs
+    const SIMILAR_ARTISTS: Record<string, string[]> = {
+      "Evanescence":    ["Within Temptation", "Nightwish", "Lacuna Coil", "Amy Lee"],
+      "Linkin Park":    ["Papa Roach", "Breaking Benjamin", "Three Days Grace"],
+      "Nirvana":        ["Pearl Jam", "Soundgarden", "Alice in Chains", "Smashing Pumpkins"],
+      "Pierce The Veil":["Sleeping With Sirens", "Bring Me The Horizon", "Of Mice & Men"],
+      "Metallica":      ["Slayer", "Megadeth", "Pantera", "Judas Priest"],
+      "Drake":          ["J. Cole", "Kendrick Lamar", "Future", "Travis Scott"],
+      "Taylor Swift":   ["Olivia Rodrigo", "Sabrina Carpenter", "Gracie Abrams"],
+      "The Weeknd":     ["Post Malone", "Doja Cat", "SZA", "Frank Ocean"],
     };
 
     let queries: string[] = [];
 
-    // Japanese/Asian language detection — keep in that music space
+    // Japanese/Korean text detection
     if (lang) {
-      queries = [`${artist} similar`, "japanese music 2025", "j-pop j-rock anime"];
+      queries = [`${artist} similar`, "japanese popular music", "j-pop anime ost 2025"];
     } else {
-      const matchedKey = Object.keys(GENRE_MAP).find(k =>
-        genre.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(genre.toLowerCase())
+      // Check if we know similar artists for this specific artist
+      const artistLower = artist.toLowerCase();
+      const knownSimilar = Object.entries(SIMILAR_ARTISTS).find(([k]) =>
+        artistLower.includes(k.toLowerCase()) || k.toLowerCase().includes(artistLower.split(" ")[0])
       );
-      if (matchedKey) {
-        queries = GENRE_MAP[matchedKey];
-      } else if (genre) {
-        queries = [`${genre} music 2025`, `${genre} hits`];
+
+      if (knownSimilar) {
+        // Use similar artist names directly
+        const similar = knownSimilar[1];
+        queries = [
+          `${similar[Math.floor(Math.random() * similar.length)]} best songs`,
+          `${similar[Math.floor(Math.random() * similar.length)]} popular`,
+        ];
       } else {
-        queries = [`${artist} similar artists`, "popular music 2025"];
+        // Fall back to genre-based queries
+        const GENRE_MAP: Record<string, string[]> = {
+          "J-Pop":          ["jpop japanese pop 2025", "j-pop best songs"],
+          "J-Rock":         ["japanese rock popular", "jrock bands"],
+          "Anime":          ["anime ost popular", "anime soundtrack hits"],
+          "K-Pop":          ["kpop hits 2025", "bts blackpink popular"],
+          "Metal":          ["heavy metal popular songs", "metal bands hits"],
+          "Nu-Metal":       ["nu metal best", "korn system of a down"],
+          "Hard Rock":      ["hard rock hits", "ac dc guns roses"],
+          "Alternative":    ["alternative rock 2025", "indie rock popular"],
+          "Indie Rock":     ["indie rock bands popular"],
+          "Rock":           ["classic rock hits", "rock popular 2025"],
+          "Hip-Hop/Rap":    ["hip hop rap popular 2025"],
+          "Hip-Hop":        ["hip hop hits 2025"],
+          "Rap":            ["trap rap popular 2025"],
+          "R&B/Soul":       ["rnb soul popular 2025"],
+          "Electronic":     ["electronic dance popular 2025"],
+          "Latin":          ["latin reggaeton popular 2025"],
+          "Pop":            ["pop hits 2025", "top pop songs"],
+          "Indie Pop":      ["indie pop popular 2025"],
+          "Lo-Fi":          ["lofi chill beats popular"],
+          "Classical":      ["classical orchestra popular"],
+          "Jazz":           ["jazz popular standards"],
+          "Country":        ["country hits popular 2025"],
+          "Reggae":         ["reggae popular hits"],
+          "Drill":          ["uk drill popular 2025"],
+          "Metalcore":      ["metalcore popular bands"],
+          "Emo":            ["emo music popular bands"],
+        };
+
+        const matchedKey = Object.keys(GENRE_MAP).find(k =>
+          genre.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(genre.toLowerCase())
+        );
+        queries = matchedKey ? GENRE_MAP[matchedKey] : [`${genre} popular music 2025`, `${artist} similar music`];
       }
     }
 

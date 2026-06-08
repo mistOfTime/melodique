@@ -27,7 +27,7 @@ export default function SongRow({ song, index, queue, showAlbum = false, showArt
   const menuRef   = useRef<HTMLDivElement>(null);
   const buttonRef = useRef<HTMLButtonElement>(null);
   const isActive  = currentSong?.id === song.id;
-  const liked     = isLiked(song.id);
+  const liked     = isLiked(song.id, song.trackName, song.artistName);
 
   const handlePlay = () => {
     if (isActive) { togglePlay(); return; }

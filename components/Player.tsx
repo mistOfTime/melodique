@@ -25,7 +25,7 @@ export default function Player() {
     seek(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)));
   }, [seek]);
 
-  const liked      = currentSong ? isLiked(currentSong.id) : false;
+  const liked      = currentSong ? isLiked(currentSong.id, currentSong.trackName, currentSong.artistName) : false;
   const toggleLike = () => { if (currentSong) toggleLiked(currentSong); };
 
   const handleAddToQueue = () => {
