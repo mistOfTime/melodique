@@ -5,7 +5,7 @@ import React, {
   useEffect, useRef, useCallback,
 } from "react";
 import { Track, apiToTrack } from "./track";
-import { saveListenHistoryToFirestore, loadListenHistoryFromFirestore, subscribeListenHistory } from "./firestoreSync";
+import { saveListenHistoryToFirestore, loadListenHistoryFromFirestore, subscribeListenHistory, saveNowPlayingToFirestore, subscribeNowPlaying } from "./firestoreSync";
 import { auth } from "./firebase";
 import { onAuthStateChanged } from "firebase/auth";
 
@@ -314,15 +314,19 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const currentSong = state.queue[state.currentIndex] ?? null;
   const hydrated = useRef(false);
 
-  // Hydrate listen history from Firestore on sign-in
+  // Hydrate listen history from Firestore on sign-in + subscribe to now-playing from other devices
   useEffect(() => {
     if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
+    let unsubNowPlaying: (() => void) | null = null;
+    const lastUpdateRef = { ts: 0 }; // prevent echo from our own writes
+
     const unsub = onAuthStateChanged(auth, async (fb) => {
+      if (unsubNowPlaying) { unsubNowPlaying(); unsubNowPlaying = null; }
       if (fb) {
+        // Load listen history from Firestore
         try {
           const remote = await loadListenHistoryFromFirestore(fb.uid);
           if (remote) {
-            // Merge remote into local (remote may have data from other devices)
             const localRaw = localStorage.getItem(LISTEN_HISTORY_KEY);
             const local: Record<string, PlayRecord> = localRaw ? JSON.parse(localRaw) : {};
             const merged = { ...local };
@@ -330,16 +334,23 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
               const rec = r as PlayRecord;
               if (merged[k]) {
                 merged[k] = { ...merged[k], count: Math.max(merged[k].count, rec.count), lastTs: Math.max(merged[k].lastTs, rec.lastTs) };
-              } else {
-                merged[k] = rec;
-              }
+              } else { merged[k] = rec; }
             });
             localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(merged));
           }
         } catch { /* ignore */ }
+
+        // Subscribe to now-playing from other devices
+        unsubNowPlaying = subscribeNowPlaying(fb.uid, (np) => {
+          // Only apply if it's from another device (not our own write from last 3s)
+          if (Date.now() - lastUpdateRef.ts < 3000) return;
+          if (!np?.queue?.length) return;
+          dispatch({ type: "SET_QUEUE", payload: { songs: np.queue, startIndex: np.currentIndex ?? 0 } });
+          dispatch({ type: "SET_PLAYING", payload: false }); // don't auto-play on remote device
+        });
       }
     });
-    return unsub;
+    return () => { unsub(); if (unsubNowPlaying) unsubNowPlaying(); };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   useEffect(() => {
@@ -363,16 +374,24 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     savePlayerState(state);
   }, [state.queue, state.currentIndex, state.volume, state.shuffle, state.repeat]);
 
-  // Fetch YouTube ID when song changes + record play
+  // Fetch YouTube ID when song changes + record play + sync now-playing to Firestore
   useEffect(() => {
     if (!currentSong) return;
-    // Only record as "user played" if it came from a SET_QUEUE or PLAY_SONG, not from radio ADD_TO_QUEUE
-    // We detect this by checking if it's in the original queue batch (index <= queue length at SET_QUEUE time)
     recordPlay(currentSong, state.currentIndex < state.queue.length - 20);
     dispatch({ type: "SET_YT_STATUS", payload: "loading" });
     fetchYouTubeId(currentSong.artistName, currentSong.trackName, currentSong.id)
       .then(id => dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: id ? "ready" : "error" } }));
-  }, [currentSong?.id]);
+    // Save to Firestore so other devices know what's playing
+    const uid = auth.currentUser?.uid;
+    if (uid) {
+      saveNowPlayingToFirestore(uid, {
+        queue:        state.queue.slice(0, 50),
+        currentIndex: state.currentIndex,
+        trackName:    currentSong.trackName,
+        artistName:   currentSong.artistName,
+      }).catch(() => {});
+    }
+  }, [currentSong?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch lyrics when song changes
   useEffect(() => {

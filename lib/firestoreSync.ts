@@ -85,6 +85,29 @@ export function subscribeProfile(
     });
   } catch { return () => {}; }
 }
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function saveNowPlayingToFirestore(uid: string, data: any): Promise<void> {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
+  try {
+    const ref = doc(db, "users", uid, "data", "nowPlaying");
+    await setDoc(ref, { ...data, updatedAt: Date.now() }, { merge: false });
+  } catch { /* ignore */ }
+}
+
+export function subscribeNowPlaying(
+  uid: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cb: (data: any) => void
+): () => void {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return () => {};
+  try {
+    const ref = doc(db, "users", uid, "data", "nowPlaying");
+    return onSnapshot(ref, snap => {
+      if (snap.exists()) cb(snap.data());
+    });
+  } catch { return () => {}; }
+}
+
 const timers: Record<string, ReturnType<typeof setTimeout>> = {};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function debouncedSave(uid: string, data: any) {
