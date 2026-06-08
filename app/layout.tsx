@@ -5,7 +5,7 @@ import { PlaylistProvider } from "@/lib/playlistContext";
 import { AuthProvider } from "@/lib/authContext";
 import AppShell from "@/components/AppShell";
 
-const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://melodique.vercel.app";
+const APP_URL = process.env.NEXT_PUBLIC_APP_URL ?? "https://melodique-fuys.vercel.app";
 
 export const metadata: Metadata = {
   title: {
