@@ -8,7 +8,7 @@ import { getTopArtists } from "@/lib/playerContext";
 import { loadListenHistoryFromFirestore, subscribeListenHistory } from "@/lib/firestoreSync";
 import { useRouter } from "next/navigation";
 import {
-  User, LogOut, Edit3,
+  User, LogOut, Edit3, Check, X,
   Heart, ListMusic, Camera, UserMinus, Play, TrendingUp,
 } from "lucide-react";
 import SongRow from "@/components/SongRow";
