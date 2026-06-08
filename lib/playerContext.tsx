@@ -380,73 +380,79 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const artist = currentSong.artistName ?? "";
     const lang   = /[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
 
-    // Build a similarity-based query — "fans also like" approach
-    // Use both artist name AND genre to find similar popular songs
-    const SIMILAR_ARTISTS: Record<string, string[]> = {
-      "Evanescence":    ["Within Temptation", "Nightwish", "Lacuna Coil", "Amy Lee"],
-      "Linkin Park":    ["Papa Roach", "Breaking Benjamin", "Three Days Grace"],
-      "Nirvana":        ["Pearl Jam", "Soundgarden", "Alice in Chains", "Smashing Pumpkins"],
-      "Pierce The Veil":["Sleeping With Sirens", "Bring Me The Horizon", "Of Mice & Men"],
-      "Metallica":      ["Slayer", "Megadeth", "Pantera", "Judas Priest"],
-      "Drake":          ["J. Cole", "Kendrick Lamar", "Future", "Travis Scott"],
-      "Taylor Swift":   ["Olivia Rodrigo", "Sabrina Carpenter", "Gracie Abrams"],
-      "The Weeknd":     ["Post Malone", "Doja Cat", "SZA", "Frank Ocean"],
+    // Build a strict genre-based query using popular known artists in that genre
+    const GENRE_POPULAR: Record<string, string[]> = {
+      // Metal / Rock variants — these MUST stay metal
+      "Metal":           ["Metallica popular", "Slayer Pantera", "Iron Maiden popular", "Black Sabbath hits"],
+      "Nu-Metal":        ["Linkin Park popular", "Korn popular", "System of a Down hits", "Papa Roach Slipknot"],
+      "Hard Rock":       ["AC DC popular", "Guns N Roses hits", "Aerosmith popular", "Led Zeppelin best"],
+      "Alternative":     ["Nirvana popular", "Pearl Jam hits", "Soundgarden Alice in Chains", "Foo Fighters best"],
+      "Indie Rock":      ["Arctic Monkeys popular", "The Strokes hits", "Tame Impala best", "Radiohead popular"],
+      "Rock":            ["classic rock popular hits", "rock legends best songs", "rock anthems"],
+      "Metalcore":       ["Bring Me The Horizon popular", "Asking Alexandria hits", "A Day To Remember"],
+      "Screamo":         ["post-hardcore popular", "Underoath popular", "Thursday Saosin"],
+      "Emo":             ["My Chemical Romance popular", "Fall Out Boy hits", "Panic at the Disco"],
+      "Punk":            ["Green Day popular", "Blink-182 hits", "Sum 41 popular"],
+
+      // Hip-Hop
+      "Hip-Hop/Rap":     ["Drake popular hits", "Kendrick Lamar best", "J Cole popular", "Travis Scott hits"],
+      "Hip-Hop":         ["hip hop popular 2025", "rap hits classic", "Kanye West popular"],
+      "Rap":             ["rap popular songs", "trap hits 2025", "Future Lil Baby popular"],
+      "Drill":           ["UK drill popular", "Pop Smoke hits", "drill 2025 popular"],
+
+      // R&B / Soul
+      "R&B/Soul":        ["The Weeknd popular", "SZA hits", "Frank Ocean best", "H.E.R. popular"],
+      "R&B":             ["rnb popular 2025", "soul classics hits"],
+
+      // Pop
+      "Pop":             ["Taylor Swift popular", "Dua Lipa hits", "Ariana Grande best", "Ed Sheeran popular"],
+      "Indie Pop":       ["Billie Eilish popular", "Olivia Rodrigo hits", "Gracie Abrams"],
+      "Dance Pop":       ["Doja Cat popular", "Sabrina Carpenter hits", "Charli XCX"],
+
+      // Electronic
+      "Electronic":      ["Daft Punk popular", "Calvin Harris hits", "Martin Garrix best", "The Chainsmokers"],
+      "Dance":           ["EDM popular 2025", "house music hits", "electronic dance popular"],
+      "Lo-Fi":           ["lofi hip hop popular", "chill beats study", "lofi girl"],
+
+      // K-Pop / J-Pop
+      "K-Pop":           ["BTS popular hits", "BLACKPINK best", "NewJeans popular", "aespa hits"],
+      "J-Pop":           ["Yoasobi popular", "Official Hige Dandism", "Ado popular", "Fujii Kaze"],
+      "J-Rock":          ["ONE OK ROCK popular", "Radwimps hits", "My First Story"],
+      "Anime":           ["anime ost popular", "Your Lie in April ost", "attack on titan ost"],
+
+      // Other
+      "Latin":           ["Bad Bunny popular", "J Balvin hits", "Ozuna Rauw Alejandro", "reggaeton 2025"],
+      "Classical":       ["beethoven symphony popular", "mozart best classical", "classical piano popular"],
+      "Jazz":            ["jazz standards popular", "Miles Davis best", "Coltrane popular"],
+      "Country":         ["Morgan Wallen popular", "Luke Combs hits", "Zach Bryan best"],
+      "Reggae":          ["Bob Marley popular", "reggae classics hits", "dancehall popular"],
     };
 
     let queries: string[] = [];
 
-    // Japanese/Korean text detection
+    // Japanese/Korean text detection — keep in that space
     if (lang) {
-      queries = [`${artist} similar`, "japanese popular music", "j-pop anime ost 2025"];
+      const isKorean = /[\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
+      if (isKorean) {
+        queries = GENRE_POPULAR["K-Pop"] ?? ["kpop popular hits"];
+      } else {
+        queries = GENRE_POPULAR["J-Pop"] ?? ["jpop popular hits"];
+      }
     } else {
-      // Check if we know similar artists for this specific artist
-      const artistLower = artist.toLowerCase();
-      const knownSimilar = Object.entries(SIMILAR_ARTISTS).find(([k]) =>
-        artistLower.includes(k.toLowerCase()) || k.toLowerCase().includes(artistLower.split(" ")[0])
+      // Find the best matching genre key
+      const genreLower = genre.toLowerCase();
+      const matchedKey = Object.keys(GENRE_POPULAR).find(k =>
+        genreLower.includes(k.toLowerCase()) || k.toLowerCase().includes(genreLower)
       );
 
-      if (knownSimilar) {
-        // Use similar artist names directly
-        const similar = knownSimilar[1];
-        queries = [
-          `${similar[Math.floor(Math.random() * similar.length)]} best songs`,
-          `${similar[Math.floor(Math.random() * similar.length)]} popular`,
-        ];
+      if (matchedKey) {
+        queries = GENRE_POPULAR[matchedKey];
+      } else if (genre) {
+        // Unknown genre — use artist's genre directly
+        queries = [`${genre} popular songs`, `best ${genre} music`, `${artist} similar popular`];
       } else {
-        // Fall back to genre-based queries
-        const GENRE_MAP: Record<string, string[]> = {
-          "J-Pop":          ["jpop japanese pop 2025", "j-pop best songs"],
-          "J-Rock":         ["japanese rock popular", "jrock bands"],
-          "Anime":          ["anime ost popular", "anime soundtrack hits"],
-          "K-Pop":          ["kpop hits 2025", "bts blackpink popular"],
-          "Metal":          ["heavy metal popular songs", "metal bands hits"],
-          "Nu-Metal":       ["nu metal best", "korn system of a down"],
-          "Hard Rock":      ["hard rock hits", "ac dc guns roses"],
-          "Alternative":    ["alternative rock 2025", "indie rock popular"],
-          "Indie Rock":     ["indie rock bands popular"],
-          "Rock":           ["classic rock hits", "rock popular 2025"],
-          "Hip-Hop/Rap":    ["hip hop rap popular 2025"],
-          "Hip-Hop":        ["hip hop hits 2025"],
-          "Rap":            ["trap rap popular 2025"],
-          "R&B/Soul":       ["rnb soul popular 2025"],
-          "Electronic":     ["electronic dance popular 2025"],
-          "Latin":          ["latin reggaeton popular 2025"],
-          "Pop":            ["pop hits 2025", "top pop songs"],
-          "Indie Pop":      ["indie pop popular 2025"],
-          "Lo-Fi":          ["lofi chill beats popular"],
-          "Classical":      ["classical orchestra popular"],
-          "Jazz":           ["jazz popular standards"],
-          "Country":        ["country hits popular 2025"],
-          "Reggae":         ["reggae popular hits"],
-          "Drill":          ["uk drill popular 2025"],
-          "Metalcore":      ["metalcore popular bands"],
-          "Emo":            ["emo music popular bands"],
-        };
-
-        const matchedKey = Object.keys(GENRE_MAP).find(k =>
-          genre.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(genre.toLowerCase())
-        );
-        queries = matchedKey ? GENRE_MAP[matchedKey] : [`${genre} popular music 2025`, `${artist} similar music`];
+        // No genre info — use artist similarity
+        queries = [`${artist} similar popular`, `popular music similar to ${artist}`];
       }
     }
 

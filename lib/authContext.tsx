@@ -12,6 +12,7 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import { auth } from "./firebase";
+import { saveProfileToFirestore, loadProfileFromFirestore } from "./firestoreSync";
 
 // ── Public user shape ─────────────────────────────────────
 export interface User {
@@ -62,13 +63,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
       return;
     }
-    const unsub = onAuthStateChanged(auth, (fb) => {
+    const unsub = onAuthStateChanged(auth, async (fb) => {
       if (fb) {
         const u = fbUserToUser(fb);
         // Restore locally saved avatar (base64) if present
         try {
           const localAvatar = localStorage.getItem("melodique_avatar");
           if (localAvatar) u.avatar = localAvatar;
+        } catch { /* ignore */ }
+        // Load profile overrides from Firestore (display name + avatar from other devices)
+        try {
+          const profile = await loadProfileFromFirestore(fb.uid);
+          if (profile?.displayName) u.displayName = profile.displayName;
+          if (profile?.avatar) {
+            u.avatar = profile.avatar;
+            try { localStorage.setItem("melodique_avatar", profile.avatar); } catch { /* ignore */ }
+          }
         } catch { /* ignore */ }
         setUser(u);
       } else {
@@ -117,7 +127,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await firebaseUpdateProfile(auth.currentUser, firebaseUpdate);
     }
 
-    // Update local state — merge with existing, don't overwrite with undefined
+    // Update local state
     setUser(u => {
       if (!u) return null;
       return {
@@ -130,6 +140,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Persist avatar locally
     if (data.avatar) {
       try { localStorage.setItem("melodique_avatar", data.avatar); } catch { /* ignore */ }
+    }
+
+    // Sync to Firestore so profile appears on all devices
+    if (auth.currentUser) {
+      const profileData: Record<string, string> = {};
+      if (data.displayName?.trim()) profileData.displayName = data.displayName.trim();
+      if (data.avatar) profileData.avatar = data.avatar;
+      if (Object.keys(profileData).length > 0) {
+        saveProfileToFirestore(auth.currentUser.uid, profileData).catch(() => {});
+      }
     }
   }, []);
 

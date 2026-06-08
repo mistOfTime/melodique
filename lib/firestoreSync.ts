@@ -51,7 +51,26 @@ export function subscribeLibrary(
   } catch { return () => {}; }
 }
 
-// Debounced save helper
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function saveProfileToFirestore(uid: string, data: any): Promise<void> {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
+  try {
+    const ref = doc(db, "users", uid, "data", "profile");
+    await setDoc(ref, { ...data, updatedAt: Date.now() }, { merge: true });
+  } catch (e) {
+    console.warn("Firestore profile save failed:", e);
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function loadProfileFromFirestore(uid: string): Promise<any | null> {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return null;
+  try {
+    const ref  = doc(db, "users", uid, "data", "profile");
+    const snap = await getDoc(ref);
+    return snap.exists() ? snap.data() : null;
+  } catch { return null; }
+}
 const timers: Record<string, ReturnType<typeof setTimeout>> = {};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function debouncedSave(uid: string, data: any) {
