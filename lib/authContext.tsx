@@ -12,7 +12,7 @@ import {
   User as FirebaseUser,
 } from "firebase/auth";
 import { auth } from "./firebase";
-import { saveProfileToFirestore, loadProfileFromFirestore } from "./firestoreSync";
+import { saveProfileToFirestore, loadProfileFromFirestore, subscribeProfile } from "./firestoreSync";
 
 // ── Public user shape ─────────────────────────────────────
 export interface User {
@@ -58,35 +58,35 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Listen to Firebase auth state — persists across refreshes automatically
   useEffect(() => {
-    // Don't try to listen if Firebase isn't properly configured
-    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
-      setLoading(false);
-      return;
-    }
+    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) { setLoading(false); return; }
+    let unsubProfile: (() => void) | null = null;
+
     const unsub = onAuthStateChanged(auth, async (fb) => {
+      if (unsubProfile) { unsubProfile(); unsubProfile = null; }
       if (fb) {
         const u = fbUserToUser(fb);
-        // Restore locally saved avatar (base64) if present
-        try {
-          const localAvatar = localStorage.getItem("melodique_avatar");
-          if (localAvatar) u.avatar = localAvatar;
-        } catch { /* ignore */ }
-        // Load profile overrides from Firestore (display name + avatar from other devices)
+        try { const a = localStorage.getItem("melodique_avatar"); if (a) u.avatar = a; } catch { /* ignore */ }
         try {
           const profile = await loadProfileFromFirestore(fb.uid);
           if (profile?.displayName) u.displayName = profile.displayName;
-          if (profile?.avatar) {
-            u.avatar = profile.avatar;
-            try { localStorage.setItem("melodique_avatar", profile.avatar); } catch { /* ignore */ }
-          }
+          if (profile?.avatar) { u.avatar = profile.avatar; try { localStorage.setItem("melodique_avatar", profile.avatar); } catch { /* ignore */ } }
         } catch { /* ignore */ }
         setUser(u);
+        // Real-time profile listener — updates name/avatar from other devices instantly
+        unsubProfile = subscribeProfile(fb.uid, (p) => {
+          setUser(cur => cur ? {
+            ...cur,
+            displayName: p.displayName || cur.displayName,
+            avatar:      p.avatar      || cur.avatar,
+          } : cur);
+          if (p.avatar) try { localStorage.setItem("melodique_avatar", p.avatar); } catch { /* ignore */ }
+        });
       } else {
         setUser(null);
       }
       setLoading(false);
     });
-    return unsub;
+    return () => { unsub(); if (unsubProfile) unsubProfile(); };
   }, []);
 
   const signUp = useCallback(async (email: string, password: string, displayName: string) => {

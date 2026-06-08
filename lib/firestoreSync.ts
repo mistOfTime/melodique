@@ -6,8 +6,7 @@
  * This syncs across all devices in real-time.
  */
 
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { db } from "./firebase";
+import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";import { db } from "./firebase";
 
 const SYNC_DEBOUNCE = 1500; // ms — wait before writing to avoid hammering Firestore
 
@@ -70,6 +69,21 @@ export async function loadProfileFromFirestore(uid: string): Promise<any | null>
     const snap = await getDoc(ref);
     return snap.exists() ? snap.data() : null;
   } catch { return null; }
+}
+
+// Real-time profile listener — updates across devices instantly
+export function subscribeProfile(
+  uid: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cb: (data: any) => void
+): () => void {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return () => {};
+  try {
+    const ref = doc(db, "users", uid, "data", "profile");
+    return onSnapshot(ref, snap => {
+      if (snap.exists()) cb(snap.data());
+    });
+  } catch { return () => {}; }
 }
 const timers: Record<string, ReturnType<typeof setTimeout>> = {};
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
