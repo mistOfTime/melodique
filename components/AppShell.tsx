@@ -12,6 +12,7 @@ import { useAuth } from "@/lib/authContext";
 import { User } from "lucide-react";
 import { ToastProvider } from "@/components/Toast";
 import { MelodiqueIcon } from "@/components/MelodiqueLogo";
+import WelcomeModal from "@/components/WelcomeModal";
 import Image from "next/image";
 import Link from "next/link";
 
@@ -117,6 +118,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       <YouTubePlayer />
+      <WelcomeModal />
     </div>
     </ToastProvider>
   );
