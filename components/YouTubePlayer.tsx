@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useCallback } from "react";
 import { usePlayer } from "@/lib/playerContext";
+import { getArtwork } from "@/lib/track";
 
 interface YTPlayer {
   loadVideoById(id: string): void;
@@ -54,7 +55,7 @@ function safeCall<T>(player: YTPlayer | null, method: keyof YTPlayer, ...args: u
 const CROSSFADE_MS = 400; // ms for fade out + fade in
 
 export default function YouTubePlayer() {
-  const { state, next, dispatch } = usePlayer();
+  const { state, currentSong, next, dispatch } = usePlayer();
   const divRef          = useRef<HTMLDivElement>(null);
   const ytRef           = useRef<YTPlayer | null>(null);
   const playerReady     = useRef(false);
@@ -217,6 +218,56 @@ export default function YouTubePlayer() {
     }, 500);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state.isPlaying, dispatch]);
+
+  /* ── Media Session API — lock screen controls ───────── */
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !currentSong) return;
+
+    navigator.mediaSession.metadata = new MediaMetadata({
+      title:  currentSong.trackName,
+      artist: currentSong.artistName,
+      album:  currentSong.collectionName,
+      artwork: [
+        { src: getArtwork(currentSong.artworkUrl100, 96),  sizes: "96x96",   type: "image/jpeg" },
+        { src: getArtwork(currentSong.artworkUrl100, 256), sizes: "256x256", type: "image/jpeg" },
+        { src: getArtwork(currentSong.artworkUrl100, 512), sizes: "512x512", type: "image/jpeg" },
+      ],
+    });
+
+    navigator.mediaSession.setActionHandler("play",          () => dispatch({ type: "SET_PLAYING", payload: true }));
+    navigator.mediaSession.setActionHandler("pause",         () => dispatch({ type: "SET_PLAYING", payload: false }));
+    navigator.mediaSession.setActionHandler("nexttrack",     () => dispatch({ type: "NEXT" }));
+    navigator.mediaSession.setActionHandler("previoustrack", () => dispatch({ type: "PREV" }));
+    navigator.mediaSession.setActionHandler("seekto", (d) => {
+      if (d.seekTime !== undefined && state.duration > 0) {
+        dispatch({ type: "SET_PROGRESS", payload: d.seekTime / state.duration });
+        safeCall(ytRef.current, "seekTo", d.seekTime, true);
+      }
+    });
+
+    navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
+
+    return () => {
+      try {
+        (["play","pause","nexttrack","previoustrack","seekto"] as MediaSessionAction[]).forEach(a => {
+          navigator.mediaSession.setActionHandler(a, null);
+        });
+      } catch { /* ignore */ }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentSong?.id, state.isPlaying, state.duration]);
+
+  /* ── Sync seek position to OS media controls ─────────── */
+  useEffect(() => {
+    if (!("mediaSession" in navigator) || !state.duration) return;
+    try {
+      navigator.mediaSession.setPositionState({
+        duration:     state.duration,
+        playbackRate: 1,
+        position:     Math.min(state.progress * state.duration, state.duration),
+      });
+    } catch { /* not all browsers support this */ }
+  }, [state.progress, state.duration]);
 
   return (
     <div className="fixed -bottom-full -left-full w-1 h-1 overflow-hidden opacity-0 pointer-events-none" aria-hidden="true">
