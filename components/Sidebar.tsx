@@ -151,6 +151,7 @@ export default function Sidebar() {
             }`}
             onClick={() => router.push("/liked")}
           >
+            {/* Always show purple/blue heart gradient — never a track cover */}
             <div className="w-10 h-10 rounded-md flex-shrink-0 bg-gradient-to-br from-purple-500 to-blue-400 flex items-center justify-center shadow-sm">
               <Heart size={14} className="text-white" fill="white" />
             </div>
