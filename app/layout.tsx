@@ -21,15 +21,16 @@ export const metadata: Metadata = {
   icons: {
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
+      { url: "/icon",        type: "image/png",     sizes: "512x512" },
     ],
     shortcut: "/favicon.svg",
-    apple:    "/favicon.svg",
+    apple:    "/icon",
   },
   manifest: "/manifest.json",
   appleWebApp: {
-    capable:    true,
+    capable:        true,
     statusBarStyle: "black-translucent",
-    title:      "Melodique",
+    title:          "Melodique",
   },
 
   /* ── OpenGraph ── */
