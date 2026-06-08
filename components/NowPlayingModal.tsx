@@ -2,7 +2,7 @@
 
 import { usePlayer } from "@/lib/playerContext";
 import { usePlaylists } from "@/lib/playlistContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import {
   ChevronDown, Mic2, Loader2, Music2,
   Play, Pause, SkipBack, SkipForward,
@@ -17,45 +17,85 @@ import AddToPlaylistModal from "./AddToPlaylistModal";
 type View = "player" | "lyrics" | "queue";
 
 export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
-  const { state, currentSong, togglePlay, next, prev, setVolume, seek, toggleShuffle, cycleRepeat, dispatch } = usePlayer();
+  const { state, currentSong, togglePlay, next, prev, setVolume, seek, toggleShuffle, cycleRepeat } = usePlayer();
   const { toggleLiked, isLiked } = usePlaylists();
   const [showAddPl, setShowAddPl] = useState(false);
   const [view, setView]           = useState<View>("player");
-  const activeRef   = useRef<HTMLParagraphElement>(null);
-  const lyricsRef   = useRef<HTMLDivElement>(null);
-  const barRef      = useRef<HTMLDivElement>(null);
+  const lyricsRef        = useRef<HTMLDivElement>(null);
+  const lyricsListRef    = useRef<HTMLDivElement>(null);
+  const lineRefs         = useRef<(HTMLParagraphElement | null)[]>([]);
+  const barRef           = useRef<HTMLDivElement>(null);
   const userScrollingRef = useRef(false);
   const scrollTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
-  const [atBottom, setAtBottom] = useState(false);
+  const [translateY, setTranslateY] = useState(0);
+  const [manualOffset, setManualOffset] = useState(0);
+  const dragStart = useRef<{ y: number; offset: number } | null>(null);
 
-  // Pause auto-scroll when user manually scrolls
+  const recenter = useCallback(() => {
+    const container = lyricsRef.current;
+    if (!container) return;
+    const activeLine = lineRefs.current[state.currentLyricIndex];
+    if (!activeLine) return;
+    const lineTop    = activeLine.offsetTop;
+    const lineHeight = activeLine.offsetHeight;
+    const center     = container.clientHeight / 2;
+    setTranslateY(center - lineTop - lineHeight / 2);
+    setManualOffset(0);
+    setIsUserScrolling(false);
+    userScrollingRef.current = false;
+  }, [state.currentLyricIndex]);
+
+  // Auto-advance tape
+  useEffect(() => {
+    if (userScrollingRef.current) return;
+    recenter();
+  }, [state.currentLyricIndex, recenter]);
+
+  // Recenter when lyrics load
+  useEffect(() => {
+    if (state.lyrics.length > 0) setTimeout(recenter, 50);
+  }, [state.lyrics, recenter]);
+
+  // Wheel scroll
   useEffect(() => {
     const el = lyricsRef.current;
     if (!el) return;
-    const onScroll = () => {
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
       userScrollingRef.current = true;
       setIsUserScrolling(true);
+      setManualOffset(prev => prev + e.deltaY * -1);
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
       scrollTimer.current = setTimeout(() => {
         userScrollingRef.current = false;
         setIsUserScrolling(false);
+        recenter();
       }, 4000);
-      const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-      setAtBottom(near);
     };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [recenter]);
 
-  // Auto-scroll active lyric into center
-  useEffect(() => {
-    if (!activeRef.current || !lyricsRef.current || userScrollingRef.current) return;
-    const container = lyricsRef.current;
-    const el = activeRef.current;
-    const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
-    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-  }, [state.currentLyricIndex]);
+  const onLyricsTouchStart = (e: React.TouchEvent) => {
+    dragStart.current = { y: e.touches[0].clientY, offset: manualOffset };
+    userScrollingRef.current = true;
+    setIsUserScrolling(true);
+    if (scrollTimer.current) clearTimeout(scrollTimer.current);
+  };
+  const onLyricsTouchMove = (e: React.TouchEvent) => {
+    if (!dragStart.current) return;
+    const dy = e.touches[0].clientY - dragStart.current.y;
+    setManualOffset(dragStart.current.offset + dy);
+  };
+  const onLyricsTouchEnd = () => {
+    dragStart.current = null;
+    scrollTimer.current = setTimeout(() => {
+      userScrollingRef.current = false;
+      setIsUserScrolling(false);
+      recenter();
+    }, 4000);
+  };
 
   // Escape key
   useEffect(() => {
@@ -216,78 +256,87 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
 
         {/* ── LYRICS VIEW ───────────────────────────────── */}
         {view === "lyrics" && (
-          <div className="relative z-10 flex-1 min-h-0 flex flex-col overflow-hidden">
+          <div
+            ref={lyricsRef}
+            className="relative z-10 flex-1 min-h-0 overflow-hidden"
+            onTouchStart={onLyricsTouchStart}
+            onTouchMove={onLyricsTouchMove}
+            onTouchEnd={onLyricsTouchEnd}
+          >
             {/* Top fade */}
-            <div className="absolute top-0 left-0 right-0 h-8 z-10 pointer-events-none bg-gradient-to-b from-black/60 to-transparent" />
+            <div className="absolute top-0 left-0 right-0 h-12 z-10 pointer-events-none"
+              style={{ background: "linear-gradient(to bottom, rgba(10,10,15,0.95) 0%, transparent 100%)" }} />
 
-            <div
-              ref={lyricsRef}
-              className="flex-1 min-h-0 overflow-y-auto"
-              style={{ scrollbarWidth: "none" }}
-            >
-              <div className="px-6 pt-6 pb-32 space-y-0.5">
-                {state.lyricsLoading ? (
-                  <div className="flex flex-col items-center py-20 text-white/30">
-                    <Loader2 size={24} className="animate-spin mb-3" />
-                    <p className="text-sm">Finding lyrics…</p>
-                  </div>
-                ) : state.lyrics.length > 0 ? (
-                  state.lyrics.map((line, i) => {
-                    const isActive   = i === state.currentLyricIndex;
-                    const isPast     = i < state.currentLyricIndex;
-                    const isComing   = i === state.currentLyricIndex + 1;
-                    const isUpcoming = i > state.currentLyricIndex + 1;
-                    return (
-                      <p
-                        key={i}
-                        ref={isActive ? activeRef : null}
-                        className="select-none cursor-default w-full break-words transition-all duration-500"
-                        style={{
-                          fontSize:      isActive ? "1.35rem" : isPast ? "0.88rem" : "0.95rem",
-                          fontWeight:    isActive ? 800 : isPast ? 400 : 500,
-                          lineHeight:    isActive ? "1.6" : "1.45",
-                          paddingTop:    isActive ? "10px" : isComing ? "4px" : "2px",
-                          paddingBottom: isActive ? "10px" : "2px",
-                          color: isActive   ? "#ffffff"
-                               : isComing   ? "rgba(255,255,255,0.65)"
-                               : isUpcoming ? "rgba(255,255,255,0.35)"
-                               : isPast     ? "rgba(255,255,255,0.18)"
-                                            : "rgba(255,255,255,0.35)",
-                          wordBreak:   "break-word",
-                          overflowWrap: "break-word",
-                          textShadow:  isActive ? "0 0 24px rgba(255,255,255,0.18)" : "none",
-                        }}
-                      >
-                        {line.text}
-                      </p>
-                    );
-                  })
-                ) : state.plainLyrics ? (
-                  <p className="text-white/60 text-sm leading-relaxed whitespace-pre-line">{state.plainLyrics}</p>
-                ) : (
-                  <div className="flex flex-col items-center py-20 text-white/30">
-                    <Music2 size={32} className="mb-3 opacity-20" />
-                    <p className="text-sm">No lyrics found</p>
-                  </div>
-                )}
+            {state.lyricsLoading ? (
+              <div className="flex flex-col items-center py-20 text-white/30">
+                <Loader2 size={24} className="animate-spin mb-3" />
+                <p className="text-sm">Finding lyrics…</p>
               </div>
-            </div>
+            ) : state.lyrics.length > 0 ? (
+              <div
+                ref={lyricsListRef}
+                style={{
+                  transform: `translateY(${translateY + manualOffset}px)`,
+                  transition: userScrollingRef.current ? "none" : "transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+                  willChange: "transform",
+                  paddingLeft: "1.5rem",
+                  paddingRight: "1.5rem",
+                }}
+              >
+                {state.lyrics.map((line, i) => {
+                  const isActive   = i === state.currentLyricIndex;
+                  const isPast     = i < state.currentLyricIndex;
+                  const isComing   = i === state.currentLyricIndex + 1;
+                  const isUpcoming = i > state.currentLyricIndex + 1;
+                  return (
+                    <p
+                      key={i}
+                      ref={el => { lineRefs.current[i] = el; }}
+                      className="select-none cursor-default w-full break-words"
+                      style={{
+                        fontSize:      isActive ? "1.4rem" : isPast ? "0.9rem" : "1rem",
+                        fontWeight:    isActive ? 800 : isPast ? 400 : 500,
+                        lineHeight:    isActive ? "1.65" : "1.5",
+                        paddingTop:    isActive ? "12px" : isComing ? "5px" : "3px",
+                        paddingBottom: isActive ? "12px" : "3px",
+                        color: isActive   ? "#ffffff"
+                             : isComing   ? "rgba(255,255,255,0.65)"
+                             : isUpcoming ? "rgba(255,255,255,0.32)"
+                             : isPast     ? "rgba(255,255,255,0.16)"
+                                          : "rgba(255,255,255,0.32)",
+                        transition:    "font-size 0.45s ease, font-weight 0.45s ease, color 0.45s ease, padding 0.45s ease",
+                        wordBreak:     "break-word",
+                        overflowWrap:  "break-word",
+                        textShadow:    isActive ? "0 0 28px rgba(255,255,255,0.2)" : "none",
+                      }}
+                    >
+                      {line.text}
+                    </p>
+                  );
+                })}
+              </div>
+            ) : state.plainLyrics ? (
+              <div className="overflow-y-auto h-full px-6 py-4">
+                <p className="text-white/60 text-sm leading-relaxed whitespace-pre-line">{state.plainLyrics}</p>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center py-20 text-white/30">
+                <Music2 size={32} className="mb-3 opacity-20" />
+                <p className="text-sm">No lyrics found</p>
+              </div>
+            )}
 
             {/* Bottom fade */}
-            <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none bg-gradient-to-t from-black/70 to-transparent" />
+            <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10"
+              style={{ background: "linear-gradient(to top, rgba(10,10,15,0.95) 0%, transparent 100%)" }} />
 
-            {/* Back to lyrics button */}
-            {isUserScrolling && !atBottom && state.lyrics.length > 0 && (
+            {/* Back to lyrics */}
+            {isUserScrolling && state.lyrics.length > 0 && (
               <button
                 onClick={() => {
                   userScrollingRef.current = false;
                   setIsUserScrolling(false);
-                  if (activeRef.current && lyricsRef.current) {
-                    const container = lyricsRef.current;
-                    const el = activeRef.current;
-                    const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
-                    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-                  }
+                  recenter();
                 }}
                 className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-4 py-2 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
               >

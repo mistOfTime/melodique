@@ -1,7 +1,7 @@
 "use client";
 
 import { usePlayer } from "@/lib/playerContext";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { X, Mic2, Loader2, ExternalLink, Music2 } from "lucide-react";
 import Image from "next/image";
 import { getArtwork, formatTrackTime } from "@/lib/track";
@@ -9,47 +9,93 @@ import Link from "next/link";
 
 export default function NowPlayingPanel() {
   const { state, currentSong, toggleLyrics } = usePlayer();
-  const activeRef       = useRef<HTMLParagraphElement>(null);
-  const scrollRef       = useRef<HTMLDivElement>(null);
-  const userScrolling   = useRef(false);
-  const resumeTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
-  // Use state so the "back to lyrics" button re-renders correctly
+  const containerRef    = useRef<HTMLDivElement>(null);
+  const listRef         = useRef<HTMLDivElement>(null);
+  const lineRefs        = useRef<(HTMLParagraphElement | null)[]>([]);
+  const userScrollingRef = useRef(false);
+  const resumeTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [isUserScrolling, setIsUserScrolling] = useState(false);
-  const [atBottom, setAtBottom] = useState(false);
+  // translateY offset to slide the tape up/down
+  const [translateY, setTranslateY] = useState(0);
+  // manual scroll offset when user drags
+  const [manualOffset, setManualOffset] = useState(0);
+  const dragStart = useRef<{ y: number; offset: number } | null>(null);
 
-  // Detect manual scroll — pause auto-scroll for 4s
+  // Compute the translate needed to center the active line
+  const recenter = useCallback(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const activeLine = lineRefs.current[state.currentLyricIndex];
+    if (!activeLine || !listRef.current) return;
+    // offsetTop of line relative to list
+    const lineTop    = activeLine.offsetTop;
+    const lineHeight = activeLine.offsetHeight;
+    const center     = container.clientHeight / 2;
+    setTranslateY(center - lineTop - lineHeight / 2);
+    setManualOffset(0);
+    setIsUserScrolling(false);
+    userScrollingRef.current = false;
+  }, [state.currentLyricIndex]);
+
+  // Auto-advance tape when lyric index changes
   useEffect(() => {
-    const el = scrollRef.current;
+    if (userScrollingRef.current) return;
+    recenter();
+  }, [state.currentLyricIndex, recenter]);
+
+  // Recenter when lyrics first load
+  useEffect(() => {
+    if (state.lyrics.length > 0) {
+      setTimeout(recenter, 50);
+    }
+  }, [state.lyrics, recenter]);
+
+  // Wheel scroll — shift tape manually
+  useEffect(() => {
+    const el = containerRef.current;
     if (!el) return;
-    const onScroll = () => {
-      userScrolling.current = true;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      userScrollingRef.current = true;
       setIsUserScrolling(true);
+      setManualOffset(prev => prev + e.deltaY * -1);
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
       resumeTimer.current = setTimeout(() => {
-        userScrolling.current = false;
+        userScrollingRef.current = false;
         setIsUserScrolling(false);
+        recenter();
       }, 4000);
-      // Check if at bottom
-      const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
-      setAtBottom(near);
     };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => el.removeEventListener("scroll", onScroll);
-  }, []);
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, [recenter]);
 
-  // Auto-scroll active lyric into center — only when user isn't manually scrolling
-  useEffect(() => {
-    if (!activeRef.current || !scrollRef.current || userScrolling.current) return;
-    const container = scrollRef.current;
-    const el = activeRef.current;
-    const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
-    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-  }, [state.currentLyricIndex]);
+  // Touch drag scroll
+  const onTouchStart = (e: React.TouchEvent) => {
+    dragStart.current = { y: e.touches[0].clientY, offset: manualOffset };
+    userScrollingRef.current = true;
+    setIsUserScrolling(true);
+    if (resumeTimer.current) clearTimeout(resumeTimer.current);
+  };
+  const onTouchMove = (e: React.TouchEvent) => {
+    if (!dragStart.current) return;
+    const dy = e.touches[0].clientY - dragStart.current.y;
+    setManualOffset(dragStart.current.offset + dy);
+  };
+  const onTouchEnd = () => {
+    dragStart.current = null;
+    resumeTimer.current = setTimeout(() => {
+      userScrollingRef.current = false;
+      setIsUserScrolling(false);
+      recenter();
+    }, 4000);
+  };
 
   if (!currentSong) return null;
 
+  const totalY = translateY + manualOffset;
+
   return (
-    // h-full fills the wrapper div in AppShell so flex layout works correctly
     <aside className="h-full flex flex-col bg-[#0d0d14] overflow-hidden animate-fade-in"
       style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
 
@@ -111,92 +157,91 @@ export default function NowPlayingPanel() {
       </div>
 
       {/* ── Lyrics ───────────────────────────────────────── */}
-      {/* flex-1 + min-h-0 lets this section grow and shrink within the flex column */}
-      <div className="flex-1 min-h-0 relative flex flex-col">
-        {/* Top fade */}
-        <div className="absolute top-0 left-0 right-0 h-6 z-10 pointer-events-none bg-gradient-to-b from-[#0d0d14] to-transparent" />
+      <div className="flex-1 min-h-0 relative overflow-hidden" ref={containerRef}
+        onTouchStart={onTouchStart} onTouchMove={onTouchMove} onTouchEnd={onTouchEnd}>
 
-        {/* Scrollable lyrics container */}
-        <div
-          ref={scrollRef}
-          className="flex-1 min-h-0 overflow-y-auto"
-          style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
-        >
-          <div className="px-4 pt-4 pb-32 space-y-0.5">
-            {state.lyricsLoading ? (
-              <div className="flex flex-col items-center py-12 text-white/30">
-                <Loader2 size={18} className="animate-spin mb-2" />
-                <p className="text-xs">Finding lyrics…</p>
-              </div>
-            ) : state.lyrics.length > 0 ? (
-              state.lyrics.map((line, i) => {
-                const isActive  = i === state.currentLyricIndex;
-                const isPast    = i < state.currentLyricIndex;
-                const isComing  = i === state.currentLyricIndex + 1;
-                const isUpcoming = i > state.currentLyricIndex + 1;
-                return (
-                  <p
-                    key={i}
-                    ref={isActive ? activeRef : null}
-                    className="select-none cursor-default w-full break-words transition-all duration-500"
-                    style={{
-                      fontSize:     isActive ? "1.15rem" : isPast ? "0.82rem" : "0.88rem",
-                      fontWeight:   isActive ? 800 : isPast ? 400 : 500,
-                      lineHeight:   isActive ? "1.6" : "1.45",
-                      paddingTop:   isActive ? "8px" : isComing ? "4px" : "2px",
-                      paddingBottom: isActive ? "8px" : "2px",
-                      color: isActive  ? "#ffffff"
-                           : isComing  ? "rgba(255,255,255,0.65)"
-                           : isUpcoming ? "rgba(255,255,255,0.35)"
-                           : isPast    ? "rgba(255,255,255,0.18)"
-                                       : "rgba(255,255,255,0.35)",
-                      transform:   isActive ? "scale(1.0)" : "scale(1)",
-                      transformOrigin: "left center",
-                      display:     "block",
-                      wordBreak:   "break-word",
-                      overflowWrap: "break-word",
-                      // Spotify-style: active line has a subtle text glow
-                      textShadow:  isActive ? "0 0 20px rgba(255,255,255,0.15)" : "none",
-                    }}
-                  >
-                    {line.text}
-                  </p>
-                );
-              })
-            ) : state.plainLyrics ? (
-              // Plain (non-synced) lyrics — scrollable wall of text
-              <p className="text-white/55 text-sm leading-relaxed whitespace-pre-line break-words">
-                {state.plainLyrics}
-              </p>
-            ) : (
-              <div className="flex flex-col items-center py-12 text-white/30">
-                <Music2 size={22} className="mb-2 opacity-20" />
-                <p className="text-xs text-center">No lyrics found</p>
-                <p className="text-[10px] text-white/20 text-center mt-1 px-4">
-                  Try searching for the song on lrclib.net
-                </p>
-              </div>
-            )}
+        {/* Top fade */}
+        <div className="absolute top-0 left-0 right-0 h-12 z-10 pointer-events-none"
+          style={{ background: "linear-gradient(to bottom, #0d0d14 0%, transparent 100%)" }} />
+
+        {/* The lyrics tape — translates as one unit */}
+        {state.lyricsLoading ? (
+          <div className="flex flex-col items-center py-12 text-white/30">
+            <Loader2 size={18} className="animate-spin mb-2" />
+            <p className="text-xs">Finding lyrics…</p>
           </div>
-        </div>
+        ) : state.lyrics.length > 0 ? (
+          <div
+            ref={listRef}
+            style={{
+              transform: `translateY(${totalY}px)`,
+              transition: userScrollingRef.current ? "none" : "transform 0.55s cubic-bezier(0.25, 0.46, 0.45, 0.94)",
+              willChange: "transform",
+              paddingLeft: "1rem",
+              paddingRight: "1rem",
+            }}
+          >
+            {state.lyrics.map((line, i) => {
+              const isActive   = i === state.currentLyricIndex;
+              const isPast     = i < state.currentLyricIndex;
+              const isComing   = i === state.currentLyricIndex + 1;
+              const isUpcoming = i > state.currentLyricIndex + 1;
+              return (
+                <p
+                  key={i}
+                  ref={el => { lineRefs.current[i] = el; }}
+                  className="select-none cursor-default w-full break-words"
+                  style={{
+                    fontSize:      isActive ? "1.18rem" : isPast ? "0.82rem" : "0.88rem",
+                    fontWeight:    isActive ? 800 : isPast ? 400 : 500,
+                    lineHeight:    isActive ? "1.65" : "1.45",
+                    paddingTop:    isActive ? "10px" : isComing ? "5px" : "3px",
+                    paddingBottom: isActive ? "10px" : "3px",
+                    color: isActive   ? "#ffffff"
+                         : isComing   ? "rgba(255,255,255,0.65)"
+                         : isUpcoming ? "rgba(255,255,255,0.32)"
+                         : isPast     ? "rgba(255,255,255,0.16)"
+                                      : "rgba(255,255,255,0.32)",
+                    transition:    "font-size 0.45s ease, font-weight 0.45s ease, color 0.45s ease, padding 0.45s ease",
+                    wordBreak:     "break-word",
+                    overflowWrap:  "break-word",
+                    textShadow:    isActive ? "0 0 24px rgba(255,255,255,0.18)" : "none",
+                  }}
+                >
+                  {line.text}
+                </p>
+              );
+            })}
+          </div>
+        ) : state.plainLyrics ? (
+          <div className="px-4 py-4 overflow-y-auto h-full">
+            <p className="text-white/55 text-sm leading-relaxed whitespace-pre-line break-words">
+              {state.plainLyrics}
+            </p>
+          </div>
+        ) : (
+          <div className="flex flex-col items-center py-12 text-white/30">
+            <Music2 size={22} className="mb-2 opacity-20" />
+            <p className="text-xs text-center">No lyrics found</p>
+            <p className="text-[10px] text-white/20 text-center mt-1 px-4">
+              Try searching for the song on lrclib.net
+            </p>
+          </div>
+        )}
 
         {/* Bottom fade */}
-        <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none bg-gradient-to-t from-[#0d0d14] to-transparent" />
+        <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10"
+          style={{ background: "linear-gradient(to top, #0d0d14 0%, transparent 100%)" }} />
 
-        {/* "Back to lyrics" button — shows when user scrolled away from active line */}
-        {isUserScrolling && !atBottom && state.lyrics.length > 0 && (
+        {/* Back to lyrics button */}
+        {isUserScrolling && state.lyrics.length > 0 && (
           <button
             onClick={() => {
-              userScrolling.current = false;
+              userScrollingRef.current = false;
               setIsUserScrolling(false);
-              if (activeRef.current && scrollRef.current) {
-                const container = scrollRef.current;
-                const el = activeRef.current;
-                const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
-                container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
-              }
+              recenter();
             }}
-            className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
+            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
           >
             <Mic2 size={11} /> Back to lyrics
           </button>
