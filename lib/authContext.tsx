@@ -103,22 +103,31 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfile = useCallback(async (data: Partial<Pick<User, "displayName" | "avatar">>) => {
     if (!auth.currentUser) return;
 
-    // Firebase photoURL only accepts real http/https URLs — not base64 data URLs.
-    // If the avatar is a base64 string, we store it locally only and skip Firebase.
     const isBase64 = (s?: string) => !!s && s.startsWith("data:");
 
     const firebaseUpdate: { displayName?: string; photoURL?: string } = {};
-    if (data.displayName) firebaseUpdate.displayName = data.displayName;
-    if (data.avatar && !isBase64(data.avatar)) firebaseUpdate.photoURL = data.avatar;
+    if (data.displayName && data.displayName.trim()) {
+      firebaseUpdate.displayName = data.displayName.trim();
+    }
+    if (data.avatar && !isBase64(data.avatar)) {
+      firebaseUpdate.photoURL = data.avatar;
+    }
 
     if (Object.keys(firebaseUpdate).length > 0) {
       await firebaseUpdateProfile(auth.currentUser, firebaseUpdate);
     }
 
-    // Always update local state (including base64 avatars)
-    setUser(u => u ? { ...u, ...data } : null);
+    // Update local state — merge with existing, don't overwrite with undefined
+    setUser(u => {
+      if (!u) return null;
+      return {
+        ...u,
+        displayName: data.displayName?.trim() || u.displayName,
+        avatar:      data.avatar || u.avatar,
+      };
+    });
 
-    // Persist avatar locally so it survives page refreshes
+    // Persist avatar locally
     if (data.avatar) {
       try { localStorage.setItem("melodique_avatar", data.avatar); } catch { /* ignore */ }
     }
