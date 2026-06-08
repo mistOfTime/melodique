@@ -15,7 +15,6 @@ import Image from "next/image";
 import Link from "next/link";
 
 const AUTH_PATHS = ["/login", "/signup"];
-// Pages that render their own top bar (avoid double headers)
 const PAGES_WITH_OWN_HEADER = ["/library", "/profile"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -25,7 +24,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const { currentSong } = usePlayer();
   const { user, loading } = useAuth();
 
-  // Redirect to login if not authenticated (skip auth pages and during loading)
   useEffect(() => {
     if (!loading && !user && !isAuthPage) {
       router.replace("/login");
@@ -34,7 +32,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
   if (isAuthPage) return <>{children}</>;
 
-  // Show nothing while auth is loading (avoids flash of content)
+  // Loading spinner
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-black">
@@ -48,12 +46,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // If not logged in and not auth page, show nothing (redirect is in progress)
   if (!user) return null;
+
   const showOwnHeader = PAGES_WITH_OWN_HEADER.some(p => pathname.startsWith(p));
 
   return (
-    <div className="flex flex-col h-screen w-screen bg-[#0a0a0f] overflow-hidden">
+    <div className="flex flex-col h-[100dvh] w-screen bg-[#0a0a0f] overflow-hidden">
 
       {/* ── Desktop ───────────────────────────────────────── */}
       <div className="hidden md:flex flex-1 min-h-0 gap-2 p-2">
@@ -72,13 +70,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* ── Mobile layout ──────────────────────────────────── */}
-      <div className="flex md:hidden flex-col flex-1 min-h-0 overflow-hidden">
+      {/* Use flex-col with fixed heights for each zone */}
+      <div className="flex md:hidden flex-col w-full" style={{ height: "100dvh" }}>
 
-        {/* Mobile top bar — profile + logout (hidden on pages that have their own) */}
+        {/* Top bar */}
         {!showOwnHeader && (
-          <div className="flex items-center justify-between px-4 pt-3 pb-2 flex-shrink-0 bg-[#121212] safe-area-top">
+          <div className="flex items-center justify-between px-4 pt-3 pb-2 flex-shrink-0 bg-[#121212]">
             <Link href="/" className="flex items-center gap-1.5">
-              <MelodiqueIcon size={28} />
+              <MelodiqueIcon size={26} />
             </Link>
             <div className="flex items-center gap-2">
               {user ? (
@@ -91,7 +90,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 </Link>
               ) : (
                 <Link href="/login"
-                  className="flex items-center gap-1.5 text-xs text-white/50 hover:text-white bg-white/[0.08] px-3 py-1.5 rounded-full transition-colors">
+                  className="flex items-center gap-1.5 text-xs text-white/50 bg-white/[0.08] px-3 py-1.5 rounded-full">
                   <User size={13} /> Log in
                 </Link>
               )}
@@ -99,12 +98,20 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </div>
         )}
 
-        <main className="flex-1 overflow-y-auto">{children}</main>
-      </div>
+        {/* Main scrollable content — flex-1 takes remaining space */}
+        <main className="flex-1 overflow-y-auto overflow-x-hidden min-h-0 bg-[#121212]">
+          {children}
+        </main>
 
-      <div className="md:hidden flex-shrink-0">
-        <Player />
-        <MobileNav />
+        {/* Player — fixed height */}
+        <div className="flex-shrink-0 bg-[#181818]">
+          <Player />
+        </div>
+
+        {/* Bottom nav — always visible */}
+        <div className="flex-shrink-0">
+          <MobileNav />
+        </div>
       </div>
 
       <YouTubePlayer />
