@@ -13,6 +13,8 @@ export default function NowPlayingPanel() {
   const scrollRef       = useRef<HTMLDivElement>(null);
   const userScrolling   = useRef(false);
   const resumeTimer     = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Use state so the "back to lyrics" button re-renders correctly
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
   const [atBottom, setAtBottom] = useState(false);
 
   // Detect manual scroll — pause auto-scroll for 4s
@@ -21,8 +23,12 @@ export default function NowPlayingPanel() {
     if (!el) return;
     const onScroll = () => {
       userScrolling.current = true;
+      setIsUserScrolling(true);
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
-      resumeTimer.current = setTimeout(() => { userScrolling.current = false; }, 4000);
+      resumeTimer.current = setTimeout(() => {
+        userScrolling.current = false;
+        setIsUserScrolling(false);
+      }, 4000);
       // Check if at bottom
       const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
       setAtBottom(near);
@@ -31,7 +37,7 @@ export default function NowPlayingPanel() {
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Auto-scroll active lyric into center — only when user isn't scrolling
+  // Auto-scroll active lyric into center — only when user isn't manually scrolling
   useEffect(() => {
     if (!activeRef.current || !scrollRef.current || userScrolling.current) return;
     const container = scrollRef.current;
@@ -43,7 +49,8 @@ export default function NowPlayingPanel() {
   if (!currentSong) return null;
 
   return (
-    <aside className="w-80 flex-shrink-0 flex flex-col bg-[#0d0d14] overflow-hidden animate-fade-in"
+    // h-full fills the wrapper div in AppShell so flex layout works correctly
+    <aside className="h-full flex flex-col bg-[#0d0d14] overflow-hidden animate-fade-in"
       style={{ borderLeft: "1px solid rgba(255,255,255,0.06)" }}>
 
       {/* ── Header ───────────────────────────────────────── */}
@@ -104,14 +111,15 @@ export default function NowPlayingPanel() {
       </div>
 
       {/* ── Lyrics ───────────────────────────────────────── */}
-      <div className="flex-1 min-h-0 relative flex flex-col overflow-hidden">
+      {/* flex-1 + min-h-0 lets this section grow and shrink within the flex column */}
+      <div className="flex-1 min-h-0 relative flex flex-col">
         {/* Top fade */}
         <div className="absolute top-0 left-0 right-0 h-6 z-10 pointer-events-none bg-gradient-to-b from-[#0d0d14] to-transparent" />
 
-        {/* Scrollable container — no overflow-hidden on parent, proper padding */}
+        {/* Scrollable lyrics container */}
         <div
           ref={scrollRef}
-          className="flex-1 overflow-y-auto"
+          className="flex-1 min-h-0 overflow-y-auto"
           style={{ scrollbarWidth: "thin", scrollbarColor: "rgba(255,255,255,0.1) transparent" }}
         >
           <div className="px-4 pt-4 pb-32 space-y-0.5">
@@ -122,28 +130,33 @@ export default function NowPlayingPanel() {
               </div>
             ) : state.lyrics.length > 0 ? (
               state.lyrics.map((line, i) => {
-                const isActive = i === state.currentLyricIndex;
-                const isPast   = i < state.currentLyricIndex;
-                const isComing = i === state.currentLyricIndex + 1;
+                const isActive  = i === state.currentLyricIndex;
+                const isPast    = i < state.currentLyricIndex;
+                const isComing  = i === state.currentLyricIndex + 1;
+                const isUpcoming = i > state.currentLyricIndex + 1;
                 return (
                   <p
                     key={i}
                     ref={isActive ? activeRef : null}
-                    className="select-none cursor-default w-full break-words"
+                    className="select-none cursor-default w-full break-words transition-all duration-500"
                     style={{
-                      fontSize:      isActive ? "1.05rem" : "0.85rem",
-                      fontWeight:    isActive ? 700 : 400,
-                      lineHeight:    isActive ? "1.55" : "1.45",
-                      padding:       isActive ? "5px 0" : "2px 0",
-                      color:         isActive  ? "#ffffff"
-                                   : isPast    ? "rgba(255,255,255,0.18)"
-                                   : isComing  ? "rgba(255,255,255,0.55)"
-                                               : "rgba(255,255,255,0.32)",
-                      // No transform — avoids clipping
-                      transition:    "all 0.3s ease",
-                      display:       "block",
-                      wordBreak:     "break-word",
-                      overflowWrap:  "break-word",
+                      fontSize:     isActive ? "1.15rem" : isPast ? "0.82rem" : "0.88rem",
+                      fontWeight:   isActive ? 800 : isPast ? 400 : 500,
+                      lineHeight:   isActive ? "1.6" : "1.45",
+                      paddingTop:   isActive ? "8px" : isComing ? "4px" : "2px",
+                      paddingBottom: isActive ? "8px" : "2px",
+                      color: isActive  ? "#ffffff"
+                           : isComing  ? "rgba(255,255,255,0.65)"
+                           : isUpcoming ? "rgba(255,255,255,0.35)"
+                           : isPast    ? "rgba(255,255,255,0.18)"
+                                       : "rgba(255,255,255,0.35)",
+                      transform:   isActive ? "scale(1.0)" : "scale(1)",
+                      transformOrigin: "left center",
+                      display:     "block",
+                      wordBreak:   "break-word",
+                      overflowWrap: "break-word",
+                      // Spotify-style: active line has a subtle text glow
+                      textShadow:  isActive ? "0 0 20px rgba(255,255,255,0.15)" : "none",
                     }}
                   >
                     {line.text}
@@ -151,6 +164,7 @@ export default function NowPlayingPanel() {
                 );
               })
             ) : state.plainLyrics ? (
+              // Plain (non-synced) lyrics — scrollable wall of text
               <p className="text-white/55 text-sm leading-relaxed whitespace-pre-line break-words">
                 {state.plainLyrics}
               </p>
@@ -166,20 +180,23 @@ export default function NowPlayingPanel() {
           </div>
         </div>
 
-        {/* Bottom fade — pointer-events-none so it doesn't block scrolling */}
+        {/* Bottom fade */}
         <div className="absolute bottom-0 left-0 right-0 h-12 pointer-events-none bg-gradient-to-t from-[#0d0d14] to-transparent" />
 
-        {/* "Jump to current" button — shows when user has scrolled away */}
-        {userScrolling.current && !atBottom && state.lyrics.length > 0 && (
+        {/* "Back to lyrics" button — shows when user scrolled away from active line */}
+        {isUserScrolling && !atBottom && state.lyrics.length > 0 && (
           <button
             onClick={() => {
               userScrolling.current = false;
+              setIsUserScrolling(false);
               if (activeRef.current && scrollRef.current) {
-                const target = activeRef.current.offsetTop - scrollRef.current.clientHeight / 2;
-                scrollRef.current.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+                const container = scrollRef.current;
+                const el = activeRef.current;
+                const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+                container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
               }
             }}
-            className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-medium hover:bg-green-500/30 transition-all"
+            className="absolute bottom-14 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
           >
             <Mic2 size={11} /> Back to lyrics
           </button>

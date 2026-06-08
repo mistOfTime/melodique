@@ -24,29 +24,37 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
   const activeRef   = useRef<HTMLParagraphElement>(null);
   const lyricsRef   = useRef<HTMLDivElement>(null);
   const barRef      = useRef<HTMLDivElement>(null);
-  const userScrolling = useRef(false);
-  const scrollTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const userScrollingRef = useRef(false);
+  const scrollTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isUserScrolling, setIsUserScrolling] = useState(false);
+  const [atBottom, setAtBottom] = useState(false);
 
   // Pause auto-scroll when user manually scrolls
   useEffect(() => {
     const el = lyricsRef.current;
     if (!el) return;
     const onScroll = () => {
-      userScrolling.current = true;
+      userScrollingRef.current = true;
+      setIsUserScrolling(true);
       if (scrollTimer.current) clearTimeout(scrollTimer.current);
-      scrollTimer.current = setTimeout(() => { userScrolling.current = false; }, 3000);
+      scrollTimer.current = setTimeout(() => {
+        userScrollingRef.current = false;
+        setIsUserScrolling(false);
+      }, 4000);
+      const near = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+      setAtBottom(near);
     };
     el.addEventListener("scroll", onScroll, { passive: true });
     return () => el.removeEventListener("scroll", onScroll);
   }, []);
 
-  // Scroll active lyric into view
+  // Auto-scroll active lyric into center
   useEffect(() => {
-    if (!activeRef.current || !lyricsRef.current || userScrolling.current) return;
+    if (!activeRef.current || !lyricsRef.current || userScrollingRef.current) return;
     const container = lyricsRef.current;
     const el = activeRef.current;
-    const top = container.scrollTop + (el.getBoundingClientRect().top - container.getBoundingClientRect().top);
-    container.scrollTo({ top: top - container.clientHeight / 2 + el.clientHeight / 2, behavior: "smooth" });
+    const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
   }, [state.currentLyricIndex]);
 
   // Escape key
@@ -208,36 +216,83 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
 
         {/* ── LYRICS VIEW ───────────────────────────────── */}
         {view === "lyrics" && (
-          <div ref={lyricsRef} className="relative z-10 flex-1 overflow-y-auto px-6 py-4 space-y-1">
-            {state.lyricsLoading ? (
-              <div className="flex flex-col items-center py-20 text-white/30">
-                <Loader2 size={24} className="animate-spin mb-3" />
-                <p className="text-sm">Finding lyrics…</p>
+          <div className="relative z-10 flex-1 min-h-0 flex flex-col overflow-hidden">
+            {/* Top fade */}
+            <div className="absolute top-0 left-0 right-0 h-8 z-10 pointer-events-none bg-gradient-to-b from-black/60 to-transparent" />
+
+            <div
+              ref={lyricsRef}
+              className="flex-1 min-h-0 overflow-y-auto"
+              style={{ scrollbarWidth: "none" }}
+            >
+              <div className="px-6 pt-6 pb-32 space-y-0.5">
+                {state.lyricsLoading ? (
+                  <div className="flex flex-col items-center py-20 text-white/30">
+                    <Loader2 size={24} className="animate-spin mb-3" />
+                    <p className="text-sm">Finding lyrics…</p>
+                  </div>
+                ) : state.lyrics.length > 0 ? (
+                  state.lyrics.map((line, i) => {
+                    const isActive   = i === state.currentLyricIndex;
+                    const isPast     = i < state.currentLyricIndex;
+                    const isComing   = i === state.currentLyricIndex + 1;
+                    const isUpcoming = i > state.currentLyricIndex + 1;
+                    return (
+                      <p
+                        key={i}
+                        ref={isActive ? activeRef : null}
+                        className="select-none cursor-default w-full break-words transition-all duration-500"
+                        style={{
+                          fontSize:      isActive ? "1.35rem" : isPast ? "0.88rem" : "0.95rem",
+                          fontWeight:    isActive ? 800 : isPast ? 400 : 500,
+                          lineHeight:    isActive ? "1.6" : "1.45",
+                          paddingTop:    isActive ? "10px" : isComing ? "4px" : "2px",
+                          paddingBottom: isActive ? "10px" : "2px",
+                          color: isActive   ? "#ffffff"
+                               : isComing   ? "rgba(255,255,255,0.65)"
+                               : isUpcoming ? "rgba(255,255,255,0.35)"
+                               : isPast     ? "rgba(255,255,255,0.18)"
+                                            : "rgba(255,255,255,0.35)",
+                          wordBreak:   "break-word",
+                          overflowWrap: "break-word",
+                          textShadow:  isActive ? "0 0 24px rgba(255,255,255,0.18)" : "none",
+                        }}
+                      >
+                        {line.text}
+                      </p>
+                    );
+                  })
+                ) : state.plainLyrics ? (
+                  <p className="text-white/60 text-sm leading-relaxed whitespace-pre-line">{state.plainLyrics}</p>
+                ) : (
+                  <div className="flex flex-col items-center py-20 text-white/30">
+                    <Music2 size={32} className="mb-3 opacity-20" />
+                    <p className="text-sm">No lyrics found</p>
+                  </div>
+                )}
               </div>
-            ) : state.lyrics.length > 0 ? (
-              state.lyrics.map((line, i) => {
-                const isActive = i === state.currentLyricIndex;
-                const isPast   = i < state.currentLyricIndex;
-                return (
-                  <p key={i} ref={isActive ? activeRef : null} className="select-none text-left leading-snug"
-                    style={{
-                      fontSize:    isActive ? "1.35rem" : "1rem",
-                      fontWeight:  isActive ? 800 : 400,
-                      color:       isActive ? "#ffffff" : isPast ? "rgba(255,255,255,0.2)" : "rgba(255,255,255,0.4)",
-                      transition:  "all 0.3s ease",
-                      padding:     isActive ? "6px 0" : "2px 0",
-                    }}>
-                    {line.text}
-                  </p>
-                );
-              })
-            ) : state.plainLyrics ? (
-              <p className="text-white/60 text-sm leading-relaxed whitespace-pre-line">{state.plainLyrics}</p>
-            ) : (
-              <div className="flex flex-col items-center py-20 text-white/30">
-                <Music2 size={32} className="mb-3 opacity-20" />
-                <p className="text-sm">No lyrics found</p>
-              </div>
+            </div>
+
+            {/* Bottom fade */}
+            <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none bg-gradient-to-t from-black/70 to-transparent" />
+
+            {/* Back to lyrics button */}
+            {isUserScrolling && !atBottom && state.lyrics.length > 0 && (
+              <button
+                onClick={() => {
+                  userScrollingRef.current = false;
+                  setIsUserScrolling(false);
+                  if (activeRef.current && lyricsRef.current) {
+                    const container = lyricsRef.current;
+                    const el = activeRef.current;
+                    const target = el.offsetTop - container.clientHeight / 2 + el.clientHeight / 2;
+                    container.scrollTo({ top: Math.max(0, target), behavior: "smooth" });
+                  }
+                }}
+                className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-4 py-2 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
+              >
+                <Mic2 size={13} /> Back to lyrics
+              </button>
             )}
           </div>
         )}

@@ -7,9 +7,11 @@ export const dynamic = "force-dynamic";
  *  2. lyrics.ovh   — large catalog, plain lyrics, no key needed
  *  3. textyl.co    — additional catalog, plain lyrics
  *
- * All sources are tried in parallel to minimise latency.
- * Synced lyrics are always preferred over plain.
- * Results are cached 24h so repeat plays are instant.
+ * Strategy:
+ *  - Try many query variations in parallel (original, cleaned, first-artist-only, etc.)
+ *  - Prefer synced lyrics over plain lyrics
+ *  - Validate results loosely to avoid wrong-song matches
+ *  - Cache hits for 24h
  */
 
 import { NextRequest, NextResponse } from "next/server";
@@ -17,20 +19,54 @@ import { getSpotifyToken } from "@/lib/spotifyToken";
 
 const TO = 7000; // 7s per source
 
-/* ── Helpers ────────────────────────────────────────────── */
+/* ── String helpers ─────────────────────────────────────── */
+
+/** Remove feat/remix/version/etc. bracketed info */
 function strip(s: string) {
   return s
     .replace(/\s*\(feat[^)]*\)/gi, "")
     .replace(/\s*\(ft\.[^)]*\)/gi, "")
     .replace(/\s*\(with[^)]*\)/gi, "")
     .replace(/\s*\[[^\]]*\]/g, "")
-    .replace(/\s*[-–]\s*(remix|edit|version|live|acoustic|remaster.*|official.*)/gi, "")
+    .replace(/\s*[-–]\s*(remix|edit|version|live|acoustic|remaster.*|official.*|radio edit.*|extended.*|deluxe.*)/gi, "")
     .replace(/\s+/g, " ").trim();
 }
-const fa = (a: string) => a.split(/[,&]|feat\.|ft\./i)[0].replace(/\(.*?\)/g, "").trim();
+
+/** Take only the first credited artist */
+const firstArtist = (a: string) =>
+  a.split(/[,&]|feat\.|ft\./i)[0].replace(/\(.*?\)/g, "").trim();
+
+/** Remove "the" prefix for search (The Beatles → Beatles) */
+const dropThe = (s: string) => s.replace(/^the\s+/i, "").trim();
+
+/** Build a deduplicated array of search strings to try */
+function titleVariants(artist: string, title: string): Array<[string, string]> {
+  const a1  = firstArtist(artist);
+  const ct  = strip(title);
+  const ca  = strip(a1);
+  const noa = dropThe(ca);
+
+  const pairs: Array<[string, string]> = [
+    [artist, title],   // original exact
+    [a1, title],       // first artist, original title
+    [ca, ct],          // both cleaned
+    [a1, ct],          // first artist, cleaned title
+    [noa, ct],         // drop "the", cleaned title
+    [ca, title],       // clean artist, original title
+  ];
+
+  // Deduplicate
+  const seen = new Set<string>();
+  return pairs.filter(([a, t]) => {
+    const key = `${a.toLowerCase()}|${t.toLowerCase()}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
 
 /* ── lrclib ─────────────────────────────────────────────── */
-async function lrclibDirect(artist: string, title: string) {
+async function lrclibGet(artist: string, title: string) {
   try {
     const r = await fetch(
       `https://lrclib.net/api/get?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`,
@@ -51,6 +87,7 @@ async function lrclibSearch(q: string) {
     if (!r.ok) return null;
     const list = await r.json();
     if (!Array.isArray(list) || !list.length) return null;
+    // Prefer synced, then any
     return list.find((x: { syncedLyrics?: string }) => x.syncedLyrics) ?? list[0];
   } catch { return null; }
 }
@@ -89,7 +126,7 @@ async function spotifyToLrclib(artist: string, title: string) {
   try {
     const token = await getSpotifyToken();
     if (!token) return null;
-    const q = `track:${strip(title)} artist:${fa(artist)}`;
+    const q = `track:${strip(title)} artist:${firstArtist(artist)}`;
     const sr = await fetch(
       `https://api.spotify.com/v1/search?q=${encodeURIComponent(q)}&type=track&limit=1&market=US`,
       { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(4000), next: { revalidate: 86400 } }
@@ -116,39 +153,56 @@ export async function GET(req: NextRequest) {
   const title  = (searchParams.get("title") ?? "").trim();
   if (!artist || !title) return NextResponse.json({ synced: null, plain: null });
 
+  const variants = titleVariants(artist, title);
+  const fa = firstArtist(artist);
   const ct = strip(title);
-  const ca = fa(artist);
 
-  // All fast sources in parallel — pick best result
-  const [a, b, c, d, e, f, g, h] = await Promise.all([
-    lrclibDirect(artist, title),           // exact original
-    lrclibDirect(ca, ct),                  // cleaned
-    lrclibDirect(ca, title),               // clean artist, original title
-    lrclibSearch(`${ca} ${ct}`),           // search
-    lrclibSearch(ct),                      // title-only search
-    ovh(ca, ct),                           // lyrics.ovh cleaned
-    ovh(ca, title),                        // lyrics.ovh original
-    textyl(ca, ct),                        // textyl
+  // ── Round 1: all lrclib GET variants + search variants in parallel ──
+  const lrcGetResults = await Promise.all(
+    variants.map(([a, t]) => lrclibGet(a, t))
+  );
+  const lrcGetHit = lrcGetResults.find(x => x?.syncedLyrics) ?? lrcGetResults.find(x => x?.plainLyrics);
+  if (lrcGetHit?.syncedLyrics) return ok(lrcGetHit.syncedLyrics, lrcGetHit.plainLyrics ?? null);
+
+  // ── Round 2: lrclib search + plain fallbacks in parallel ──
+  const [
+    searchHit1, searchHit2, searchHit3,
+    ovhHit1, ovhHit2,
+    textylHit,
+  ] = await Promise.all([
+    lrclibSearch(`${fa} ${ct}`),
+    lrclibSearch(`${ct}`),
+    lrclibSearch(`${artist} ${title}`),
+    ovh(fa, ct),
+    ovh(fa, title),
+    textyl(fa, ct),
   ]);
 
-  // Pick best: prefer synced lrclib > plain lrclib > ovh > textyl
-  const lrcHit = [a, b, c, d, e].find(x => x && (x.syncedLyrics || x.plainLyrics));
-  if (lrcHit?.syncedLyrics) return ok(lrcHit.syncedLyrics, lrcHit.plainLyrics ?? null);
-  if (lrcHit?.plainLyrics)  return ok(null, lrcHit.plainLyrics);
-  if (f) return ok(null, f as string);
-  if (g) return ok(null, g as string);
-  if (h) return ok(null, h as string);
+  const searchHit = [searchHit1, searchHit2, searchHit3].find(x => x?.syncedLyrics)
+                 ?? [searchHit1, searchHit2, searchHit3].find(x => x?.plainLyrics);
+  if (searchHit?.syncedLyrics) return ok(searchHit.syncedLyrics, searchHit.plainLyrics ?? null);
+  if (lrcGetHit?.plainLyrics)  return ok(null, lrcGetHit.plainLyrics);
+  if (searchHit?.plainLyrics)  return ok(null, searchHit.plainLyrics);
+  if (ovhHit1)  return ok(null, ovhHit1 as string);
+  if (ovhHit2)  return ok(null, ovhHit2 as string);
+  if (textylHit) return ok(null, textylHit as string);
 
-  // Slower fallback: Spotify ISRC → lrclib (most accurate for tricky tracks)
+  // ── Round 3: Spotify ISRC lookup (slower but most accurate) ──
   const isrcHit = await spotifyToLrclib(artist, title);
   if (isrcHit?.syncedLyrics) return ok(isrcHit.syncedLyrics, isrcHit.plainLyrics ?? null);
   if (isrcHit?.plainLyrics)  return ok(null, isrcHit.plainLyrics);
 
-  // Last try: first few words of title only
-  if (ct.split(" ").length > 2) {
-    const short = await lrclibSearch(ct.split(" ").slice(0, 3).join(" "));
-    if (short?.syncedLyrics) return ok(short.syncedLyrics, short.plainLyrics ?? null);
-    if (short?.plainLyrics)  return ok(null, short.plainLyrics);
+  // ── Round 4: short title search (last resort) ──
+  const words = ct.split(" ");
+  if (words.length > 2) {
+    const short = words.slice(0, 3).join(" ");
+    const [shortSearch, ovhShort] = await Promise.all([
+      lrclibSearch(`${fa} ${short}`),
+      ovh(fa, short),
+    ]);
+    if (shortSearch?.syncedLyrics) return ok(shortSearch.syncedLyrics, shortSearch.plainLyrics ?? null);
+    if (shortSearch?.plainLyrics)  return ok(null, shortSearch.plainLyrics);
+    if (ovhShort) return ok(null, ovhShort as string);
   }
 
   return NextResponse.json(
