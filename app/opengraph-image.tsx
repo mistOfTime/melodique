@@ -77,7 +77,7 @@ export default function OgImage() {
 
           {/* Feature pills */}
           <div style={{ display: "flex", gap: 14, marginTop: 8 }}>
-            {["Spotify", "iTunes", "YouTube", "Lyrics", "Free"].map((label) => (
+            {["Spotify", "Free", "Unlimited Skips", "Songs"].map((label) => (
               <div key={label} style={{
                 background: "rgba(255,255,255,0.1)",
                 border: "1px solid rgba(255,255,255,0.2)",
