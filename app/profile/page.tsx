@@ -132,7 +132,7 @@ export default function ProfilePage() {
           className="flex items-center gap-2 px-5 py-2 rounded-full border border-white/20 text-white/60 hover:text-white hover:border-white/40 text-sm font-semibold transition-all">
           <LogOut size={15} /> Sign out
         </button>
-        <button onClick={() => { setNameInput(user.displayName); setEditing(true); }}
+        <button onClick={() => router.push("/edit-profile")}
           className="flex items-center gap-2 px-5 py-2 rounded-full border border-white/20 text-white/60 hover:text-white hover:border-white/40 text-sm font-semibold transition-all">
           <Edit3 size={15} /> Edit profile
         </button>

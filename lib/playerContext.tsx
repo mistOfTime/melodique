@@ -104,9 +104,21 @@ export function getTopArtists(limit = 10): { name: string; id: string; image: st
     if (!raw) return [];
     const records: Record<string, PlayRecord> = JSON.parse(raw);
     return Object.values(records)
+      .filter(r => r.count > 0 && r.artistName)
       .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
       .slice(0, limit)
-      .map(r => ({ name: r.artistName, id: r.artistId, image: r.image, playCount: r.count }));
+      // Deduplicate by normalized name
+      .filter((r, i, arr) => {
+        const normalized = r.artistName.toLowerCase().trim();
+        return arr.findIndex(x => x.artistName.toLowerCase().trim() === normalized) === i;
+      })
+      .map(r => ({
+        name:      r.artistName,
+        id:        r.artistId || r.artistName,
+        // Use best quality image — prefer non-empty, non-default
+        image:     r.image && r.image.length > 10 ? r.image : "",
+        playCount: r.count,
+      }));
   } catch { return []; }
 }
 

@@ -6,12 +6,12 @@ import SongRow from "@/components/SongRow";
 import { Search, Loader2, X, Music2, Clock, PlusCircle } from "lucide-react";
 import { usePlayer } from "@/lib/playerContext";
 import { usePlaylists } from "@/lib/playlistContext";
-import { getRecentSongs } from "@/lib/playerContext";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-const SEARCH_HISTORY_KEY = "melodique_search_history";
+const SEARCH_HISTORY_KEY     = "melodique_search_history";
+const SEARCH_RECENT_SONGS_KEY = "melodique_search_recent_songs"; // separate from play history
 const MAX_HISTORY = 10;
 
 function getHistory(): string[] {
@@ -27,6 +27,21 @@ function removeFromHistory(term: string) {
   try {
     localStorage.setItem(SEARCH_HISTORY_KEY, JSON.stringify(getHistory().filter(t => t !== term)));
   } catch { /* ignore */ }
+}
+// Save a song that was found via search and played
+function saveSearchRecentSong(track: Track) {
+  try {
+    const raw    = localStorage.getItem(SEARCH_RECENT_SONGS_KEY);
+    const recent: Track[] = raw ? JSON.parse(raw) : [];
+    const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, 20);
+    localStorage.setItem(SEARCH_RECENT_SONGS_KEY, JSON.stringify(deduped));
+  } catch { /* ignore */ }
+}
+function getSearchRecentSongs(): Track[] {
+  try {
+    const raw = localStorage.getItem(SEARCH_RECENT_SONGS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch { return []; }
 }
 
 const GENRES: { label: string; color: string; query: string }[] = [
@@ -108,7 +123,7 @@ export default function SearchPage() {
 
   useEffect(() => {
     setHistory(getHistory());
-    setRecentSongs(getRecentSongs(12));
+    setRecentSongs(getSearchRecentSongs());
   }, []);
 
   // Genre cover art preload — load all genres in parallel with Spotify-quality results
@@ -215,7 +230,11 @@ export default function SearchPage() {
 
   const handleSuggestionClick = (s: SuggestItem) => {
     if (s.type === "artist") { router.push(`/artist/${encodeURIComponent(s.label)}`); }
-    else if (s.type === "track" && s.track) { playQueue([s.track], 0); setShowDrop(false); }
+    else if (s.type === "track" && s.track) {
+      saveSearchRecentSong(s.track);
+      playQueue([s.track], 0);
+      setShowDrop(false);
+    }
     else { setQuery(s.label); doSearch(s.label); }
   };
 
@@ -415,7 +434,7 @@ export default function SearchPage() {
               <section>
                 <h2 className="font-bold text-lg text-white mb-3">Top result</h2>
                 <div className="bg-white/[0.05] hover:bg-white/[0.08] rounded-xl p-5 cursor-pointer transition-colors w-full sm:w-64 group relative"
-                  onClick={() => playQueue(tracks, 0)}>
+                  onClick={() => { saveSearchRecentSong(tracks[0]); playQueue(tracks, 0); }}>
                   {tracks[0].artworkUrl100
                     ? <Image src={getArtwork(tracks[0].artworkUrl100, 200)} alt={tracks[0].trackName} width={80} height={80} className="rounded-lg mb-4 shadow-lg object-cover" />
                     : <div className="w-20 h-20 rounded-lg bg-white/10 mb-4 flex items-center justify-center"><Music2 size={24} className="text-white/20" /></div>}
