@@ -1,6 +1,7 @@
 "use client";
 
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import Sidebar from "@/components/Sidebar";
 import Player from "@/components/Player";
 import NowPlayingPanel from "@/components/NowPlayingPanel";
@@ -19,12 +20,36 @@ const PAGES_WITH_OWN_HEADER = ["/library", "/profile"];
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname   = usePathname();
+  const router     = useRouter();
   const isAuthPage = AUTH_PATHS.some(p => pathname.startsWith(p));
   const { currentSong } = usePlayer();
-  const { user } = useAuth();
+  const { user, loading } = useAuth();
+
+  // Redirect to login if not authenticated (skip auth pages and during loading)
+  useEffect(() => {
+    if (!loading && !user && !isAuthPage) {
+      router.replace("/login");
+    }
+  }, [user, loading, isAuthPage, router]);
 
   if (isAuthPage) return <>{children}</>;
 
+  // Show nothing while auth is loading (avoids flash of content)
+  if (loading) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-black">
+        <div className="flex flex-col items-center gap-3">
+          <svg width="40" height="40" viewBox="0 0 32 32" fill="none">
+            <path d="M22 4v14.5a4 4 0 1 1-2-3.465V8.82L12 10.91V22.5a4 4 0 1 1-2-3.465V9L22 6V4z" fill="#1ed760"/>
+          </svg>
+          <div className="w-5 h-5 border-2 border-white/20 border-t-green-400 rounded-full animate-spin" />
+        </div>
+      </div>
+    );
+  }
+
+  // If not logged in and not auth page, show nothing (redirect is in progress)
+  if (!user) return null;
   const showOwnHeader = PAGES_WITH_OWN_HEADER.some(p => pathname.startsWith(p));
 
   return (
