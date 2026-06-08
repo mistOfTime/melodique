@@ -1,6 +1,6 @@
 "use client";
 
-import { ItunesTrack, getArtwork } from "@/lib/itunes";
+import { Track, getArtwork } from "@/lib/track";
 import { usePlayer } from "@/lib/playerContext";
 import { Play } from "lucide-react";
 import Image from "next/image";
@@ -8,7 +8,7 @@ import Link from "next/link";
 
 interface ArtistCardProps {
   artist: string;
-  tracks: ItunesTrack[];
+  tracks: Track[];
 }
 
 export default function ArtistCard({ artist, tracks }: ArtistCardProps) {

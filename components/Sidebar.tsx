@@ -11,7 +11,7 @@ import { usePlaylists } from "@/lib/playlistContext";
 import { usePlayer } from "@/lib/playerContext";
 import { useAuth } from "@/lib/authContext";
 import Image from "next/image";
-import { PlaylistCoverGrid } from "@/app/page";
+import { PlaylistCoverGrid } from "@/components/PlaylistCoverGrid";
 import { useState, useRef } from "react";
 
 export default function Sidebar() {

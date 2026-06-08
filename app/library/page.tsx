@@ -5,7 +5,7 @@ import { usePlaylists } from "@/lib/playlistContext";
 import { usePlayer } from "@/lib/playerContext";
 import { useAuth } from "@/lib/authContext";
 import { useRouter } from "next/navigation";
-import { PlaylistCoverGrid } from "@/app/page";
+import { PlaylistCoverGrid } from "@/components/PlaylistCoverGrid";
 import {
   Heart, Play, Plus, Check, X, Search,
   Music2, User, LogOut, Camera, ListFilter,

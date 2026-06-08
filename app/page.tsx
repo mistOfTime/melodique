@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/authContext";
 import { Play, Loader2, Heart, ChevronRight, Radio, Mic2, TrendingUp, Flame } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import { PlaylistCoverGrid } from "@/components/PlaylistCoverGrid";
 
 /* ── Types ─────────────────────────────────────────────── */
 interface SpotifyAlbum {
@@ -462,28 +463,6 @@ function AlbumCardItem({ cover, title, subtitle, onPlay, href, artistHref, badge
           ? <Link href={artistHref} className="text-xs text-white/50 truncate block mt-0.5 hover:underline hover:text-white transition-colors">{subtitle}</Link>
           : <p className="text-xs text-white/50 truncate mt-0.5">{subtitle}</p>}
       </div>
-    </div>
-  );
-}
-
-/* ── Playlist cover grid (4-tile mosaic) ────────────── */
-export function PlaylistCoverGrid({ playlist, size = 56 }: { playlist: { tracks: { artworkUrl100: string }[]; cover?: string }; size?: number }) {
-  if (playlist.cover) {
-    return <Image src={playlist.cover} alt="" width={size} height={size} className="w-full h-full object-cover" unoptimized />;
-  }
-  const covers = Array.from(
-    new Map(playlist.tracks.map(t => [t.artworkUrl100, t])).values()
-  ).filter(t => t.artworkUrl100).slice(0, 4).map(t => getArtwork(t.artworkUrl100, 100));
-  if (covers.length === 0) return <div className="w-full h-full bg-white/10" />;
-  if (covers.length < 4) return <Image src={covers[0]} alt="" width={size} height={size} className="w-full h-full object-cover" />;
-  const half = size / 2;
-  return (
-    <div className="grid grid-cols-2 w-full h-full" style={{ width: size, height: size }}>
-      {covers.map((src, i) => (
-        <div key={i} style={{ width: half, height: half }} className="overflow-hidden">
-          <Image src={src} alt="" width={half} height={half} className="w-full h-full object-cover" />
-        </div>
-      ))}
     </div>
   );
 }

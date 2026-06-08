@@ -11,7 +11,7 @@ import {
   Heart, ListMusic, Camera, UserMinus, Play, TrendingUp,
 } from "lucide-react";
 import SongRow from "@/components/SongRow";
-import { PlaylistCoverGrid } from "@/app/page";
+import { PlaylistCoverGrid } from "@/components/PlaylistCoverGrid";
 import Image from "next/image";
 import Link from "next/link";
 

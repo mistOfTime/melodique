@@ -3,7 +3,7 @@
 import { usePlaylists } from "@/lib/playlistContext";
 import { usePlayer } from "@/lib/playerContext";
 import SongRow from "@/components/SongRow";
-import { PlaylistCoverGrid } from "@/app/page";
+import { PlaylistCoverGrid } from "@/components/PlaylistCoverGrid";
 import {
   Play, Shuffle, ArrowLeft, Music2, Camera,
 } from "lucide-react";

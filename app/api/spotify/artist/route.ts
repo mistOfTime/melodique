@@ -10,7 +10,7 @@ async function fetchAllPages(url: string, token: string, max = 500) {
   let page = 0;
   while (next && items.length < max && page < 20) {
     page++;
-    const res = await fetch(next, {
+    const res: Response = await fetch(next, {
       headers: headers(token),
       // Short cache for discography so new releases appear quickly
       next: { revalidate: 900 },
