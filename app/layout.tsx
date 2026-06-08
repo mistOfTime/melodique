@@ -17,13 +17,19 @@ export const metadata: Metadata = {
   authors: [{ name: "Melodique" }],
   creator: "Melodique",
 
-  /* ── Favicon ── */
+  /* ── Favicon + manifest ── */
   icons: {
     icon: [
       { url: "/favicon.svg", type: "image/svg+xml" },
     ],
     shortcut: "/favicon.svg",
-    apple: "/favicon.svg",
+    apple:    "/favicon.svg",
+  },
+  manifest: "/manifest.json",
+  appleWebApp: {
+    capable:    true,
+    statusBarStyle: "black-translucent",
+    title:      "Melodique",
   },
 
   /* ── OpenGraph ── */

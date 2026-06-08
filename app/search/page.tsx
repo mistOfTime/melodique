@@ -6,6 +6,7 @@ import SongRow from "@/components/SongRow";
 import { Search, Loader2, X, Music2, Clock, PlusCircle } from "lucide-react";
 import { usePlayer } from "@/lib/playerContext";
 import { usePlaylists } from "@/lib/playlistContext";
+import { getRecentSongs } from "@/lib/playerContext";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -93,6 +94,7 @@ export default function SearchPage() {
   const [searched, setSearched]       = useState(false);
   const [showDrop, setShowDrop]       = useState(false);
   const [history, setHistory]         = useState<string[]>([]);
+  const [recentSongs, setRecentSongs] = useState<Track[]>([]);
   const [genreData, setGenreData]     = useState<Map<string, Track>>(new Map());
   const [activeIdx, setActiveIdx]     = useState(-1);
 
@@ -104,7 +106,10 @@ export default function SearchPage() {
   const dropRef       = useRef<HTMLDivElement>(null);
   const suggestAbort  = useRef<AbortController | null>(null);
 
-  useEffect(() => { setHistory(getHistory()); }, []);
+  useEffect(() => {
+    setHistory(getHistory());
+    setRecentSongs(getRecentSongs(12));
+  }, []);
 
   // Genre cover art preload — load all genres in parallel with Spotify-quality results
   useEffect(() => {
@@ -334,6 +339,29 @@ export default function SearchPage() {
                   className="opacity-0 group-hover:opacity-100 text-white/40 hover:text-white transition-all">
                   <X size={13} />
                 </button>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* ── Recently played songs ────────────────────────── */}
+      {!query && recentSongs.length > 0 && (
+        <div className="mb-6">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="font-bold text-base text-white">Recently played</h2>
+          </div>
+          <div className="flex gap-3 overflow-x-auto pb-2 hide-scrollbar">
+            {recentSongs.map(t => (
+              <div key={t.id}
+                className="flex-shrink-0 flex flex-col items-center gap-1.5 cursor-pointer group w-20"
+                onClick={() => { playQueue([t], 0); }}>
+                <div className="w-16 h-16 rounded-xl overflow-hidden bg-white/10 flex-shrink-0 group-hover:scale-105 transition-transform">
+                  {t.artworkUrl100
+                    ? <Image src={getArtwork(t.artworkUrl100, 100)} alt={t.trackName} width={64} height={64} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center"><Music2 size={18} className="text-white/20" /></div>}
+                </div>
+                <p className="text-[10px] text-white/70 truncate w-full text-center">{t.trackName}</p>
               </div>
             ))}
           </div>

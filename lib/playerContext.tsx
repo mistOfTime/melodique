@@ -51,39 +51,69 @@ type Action =
   | { type: "SET_FADE";         payload: number }; // 0-1 volume multiplier for crossfade
 
 const PLAYER_STORAGE_KEY = "melodique_player_state_v1";
-const LISTEN_HISTORY_KEY  = "melodique_listen_history";
+const LISTEN_HISTORY_KEY = "melodique_listen_history";
+const RECENT_SONGS_KEY   = "melodique_recent_songs";
 
-// Track a play in listening history (for "Top Artists" feature)
+/* ── Listening history helpers ─────────────────────────── */
+interface PlayRecord {
+  artistName: string;
+  artistId:   string;
+  image:      string;
+  genre:      string;
+  count:      number;
+  lastTs:     number;
+}
+
 export function recordPlay(track: Track) {
   if (typeof window === "undefined") return;
   try {
-    const raw  = localStorage.getItem(LISTEN_HISTORY_KEY);
-    const hist = raw ? JSON.parse(raw) as { id: string; artistName: string; artistId: string; artworkUrl100: string; ts: number }[] : [];
-    hist.unshift({ id: track.id, artistName: track.artistName, artistId: track.artistId, artworkUrl100: track.artworkUrl100, ts: Date.now() });
-    // Keep last 500 plays
-    localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(hist.slice(0, 500)));
+    // Update artist play counts (aggregated, not a raw list)
+    const raw     = localStorage.getItem(LISTEN_HISTORY_KEY);
+    const records: Record<string, PlayRecord> = raw ? JSON.parse(raw) : {};
+    const key     = track.artistName.toLowerCase().trim();
+    if (records[key]) {
+      records[key].count++;
+      records[key].lastTs = Date.now();
+      if (track.artworkUrl100) records[key].image = track.artworkUrl100;
+    } else {
+      records[key] = {
+        artistName: track.artistName,
+        artistId:   track.artistId ?? "",
+        image:      track.artworkUrl100 ?? "",
+        genre:      track.primaryGenreName ?? "",
+        count:      1,
+        lastTs:     Date.now(),
+      };
+    }
+    localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(records));
+
+    // Also save to recent songs list (last 50)
+    const recentRaw  = localStorage.getItem(RECENT_SONGS_KEY);
+    const recent: Track[] = recentRaw ? JSON.parse(recentRaw) : [];
+    const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, 50);
+    localStorage.setItem(RECENT_SONGS_KEY, JSON.stringify(deduped));
   } catch { /* ignore */ }
 }
 
-export function getTopArtists(days = 30, limit = 10): { name: string; id: string; image: string; playCount: number }[] {
+export function getTopArtists(limit = 10): { name: string; id: string; image: string; playCount: number }[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw  = localStorage.getItem(LISTEN_HISTORY_KEY);
+    const raw = localStorage.getItem(LISTEN_HISTORY_KEY);
     if (!raw) return [];
-    const hist = JSON.parse(raw) as { artistName: string; artistId: string; artworkUrl100: string; ts: number }[];
-    const since = Date.now() - days * 24 * 60 * 60 * 1000;
-    const counts = new Map<string, { name: string; id: string; image: string; count: number }>();
-    for (const h of hist) {
-      if (h.ts < since) continue;
-      const key = h.artistName.toLowerCase().trim();
-      const existing = counts.get(key);
-      if (existing) { existing.count++; }
-      else { counts.set(key, { name: h.artistName, id: h.artistId ?? h.artistName, image: h.artworkUrl100 ?? "", count: 1 }); }
-    }
-    return Array.from(counts.values())
-      .sort((a, b) => b.count - a.count)
+    const records: Record<string, PlayRecord> = JSON.parse(raw);
+    return Object.values(records)
+      .sort((a, b) => b.count - a.count || b.lastTs - a.lastTs)
       .slice(0, limit)
-      .map(a => ({ name: a.name, id: a.id, image: a.image, playCount: a.count }));
+      .map(r => ({ name: r.artistName, id: r.artistId, image: r.image, playCount: r.count }));
+  } catch { return []; }
+}
+
+export function getRecentSongs(limit = 20): Track[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = localStorage.getItem(RECENT_SONGS_KEY);
+    if (!raw) return [];
+    return (JSON.parse(raw) as Track[]).slice(0, limit);
   } catch { return []; }
 }
 
@@ -324,56 +354,68 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.currentTime, state.lyrics, state.currentLyricIndex]);
 
-  // Genre radio — when within 2 songs of queue end, auto-fetch more from same genre
+  // Genre radio — when within 2 songs of queue end, fetch more genre-matched songs
   const radioFetching = useRef(false);
   useEffect(() => {
     if (!currentSong) return;
     const remaining = state.queue.length - 1 - state.currentIndex;
     if (remaining > 2 || radioFetching.current) return;
 
-    const rawGenre = currentSong.primaryGenreName ?? "";
-    const artist   = currentSong.artistName ?? "";
+    const genre  = currentSong.primaryGenreName ?? "";
+    const artist = currentSong.artistName ?? "";
+    const lang   = /[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
 
-    // Map iTunes genre tags → popular search queries for better results
-    const GENRE_QUERIES: Record<string, string[]> = {
-      "Metal":              ["metal bands", "heavy metal", "death metal"],
-      "Nu-Metal":           ["nu metal", "korn linkin park", "nu metal bands"],
-      "Hard Rock":          ["hard rock bands", "classic hard rock"],
-      "Rock":               ["rock bands", "classic rock hits"],
-      "Alternative":        ["alternative rock", "indie rock"],
-      "Indie Rock":         ["indie rock", "indie alternative"],
-      "Pop":                ["pop hits", "top pop songs"],
-      "Hip-Hop/Rap":        ["hip hop rap", "rap songs"],
-      "Hip-Hop":            ["hip hop", "trap rap"],
-      "Rap":                ["rap", "trap music"],
-      "R&B/Soul":           ["rnb soul", "r&b music"],
-      "Electronic":         ["electronic music", "edm"],
-      "Dance":              ["dance music", "edm hits"],
-      "K-Pop":              ["kpop", "korean pop"],
-      "Latin":              ["latin pop", "reggaeton"],
-      "Reggae":             ["reggae", "dancehall"],
-      "Country":            ["country music", "country hits"],
-      "Jazz":               ["jazz music", "jazz songs"],
-      "Classical":          ["classical music", "orchestra"],
-      "Punk":               ["punk rock", "punk bands"],
-      "Emo":                ["emo music", "emo bands"],
-      "Screamo":            ["screamo bands", "post-hardcore"],
-      "Metalcore":          ["metalcore bands", "metalcore"],
-      "Indie Pop":          ["indie pop", "indie music"],
-      "Dream Pop":          ["dream pop", "shoegaze"],
-      "Lo-Fi":              ["lo-fi hip hop", "chill lo-fi"],
+    // Build genre-specific query — Japanese artists stay in Japanese music
+    const GENRE_MAP: Record<string, string[]> = {
+      "J-Pop":          ["jpop japanese pop", "j-pop 2025"],
+      "J-Rock":         ["japanese rock", "jrock bands"],
+      "Anime":          ["anime ost", "anime soundtrack"],
+      "K-Pop":          ["kpop 2025", "korean pop hits"],
+      "Metal":          ["heavy metal", "metal bands 2025"],
+      "Nu-Metal":       ["nu metal", "korn linkin park"],
+      "Hard Rock":      ["hard rock 2025", "rock classics"],
+      "Alternative":    ["alternative rock indie 2025"],
+      "Indie Rock":     ["indie rock bands"],
+      "Rock":           ["rock hits 2025"],
+      "Hip-Hop/Rap":    ["hip hop rap 2025"],
+      "Hip-Hop":        ["hip hop 2025"],
+      "Rap":            ["trap rap 2025"],
+      "R&B/Soul":       ["rnb soul 2025"],
+      "Electronic":     ["electronic dance 2025"],
+      "Latin":          ["latin reggaeton 2025"],
+      "Pop":            ["pop hits 2025"],
+      "Indie Pop":      ["indie pop 2025"],
+      "Lo-Fi":          ["lofi chill beats"],
+      "Classical":      ["classical orchestra"],
+      "Jazz":           ["jazz 2025"],
+      "Country":        ["country hits 2025"],
+      "Reggae":         ["reggae dancehall"],
+      "Drill":          ["drill 2025"],
+      "Metalcore":      ["metalcore bands"],
+      "Emo":            ["emo music bands"],
     };
 
-    // Find matching query, fallback to artist + genre, then just genre
-    const matchedKey = Object.keys(GENRE_QUERIES).find(k =>
-      rawGenre.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawGenre.toLowerCase())
-    );
-    const queries = matchedKey ? GENRE_QUERIES[matchedKey] : null;
-    const query = queries
-      ? queries[Math.floor(Math.random() * queries.length)]
-      : rawGenre || artist;
+    let queries: string[] = [];
 
+    // Japanese/Asian language detection — keep in that music space
+    if (lang) {
+      queries = [`${artist} similar`, "japanese music 2025", "j-pop j-rock anime"];
+    } else {
+      const matchedKey = Object.keys(GENRE_MAP).find(k =>
+        genre.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(genre.toLowerCase())
+      );
+      if (matchedKey) {
+        queries = GENRE_MAP[matchedKey];
+      } else if (genre) {
+        queries = [`${genre} music 2025`, `${genre} hits`];
+      } else {
+        queries = [`${artist} similar artists`, "popular music 2025"];
+      }
+    }
+
+    const query = queries[Math.floor(Math.random() * queries.length)];
     if (!query) return;
+
     radioFetching.current = true;
     fetch(`/api/music/search?q=${encodeURIComponent(query)}&limit=25`)
       .then(r => r.json())
@@ -383,7 +425,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
         const existingIds = new Set(state.queue.map((s: Track) => s.id));
         const fresh = incoming.filter((s: Track) => !existingIds.has(s.id));
         if (fresh.length > 0) {
-          fresh.forEach((s: Track) => dispatch({ type: "ADD_TO_QUEUE", payload: s }));
+          // Shuffle the fresh tracks before adding so it's not always the same order
+          const shuffled = [...fresh].sort(() => Math.random() - 0.5);
+          shuffled.forEach((s: Track) => dispatch({ type: "ADD_TO_QUEUE", payload: s }));
         }
       })
       .catch(() => { /* silent */ })

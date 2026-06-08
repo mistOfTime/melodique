@@ -60,7 +60,7 @@ export default function ProfilePage() {
   // Top artists from listening history — computed client-side
   const [topArtists, setTopArtists] = useState<{ name: string; id: string; image: string; playCount: number }[]>([]);
   useEffect(() => {
-    setTopArtists(getTopArtists(30, 8));
+    setTopArtists(getTopArtists(8));
   }, []);
 
   return (
