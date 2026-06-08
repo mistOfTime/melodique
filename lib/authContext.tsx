@@ -57,6 +57,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   // Listen to Firebase auth state — persists across refreshes automatically
   useEffect(() => {
+    // Don't try to listen if Firebase isn't properly configured
+    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
+      setLoading(false);
+      return;
+    }
     const unsub = onAuthStateChanged(auth, (fb) => {
       if (fb) {
         const u = fbUserToUser(fb);
