@@ -5,6 +5,9 @@ import React, {
   useEffect, useRef, useCallback,
 } from "react";
 import { Track, apiToTrack } from "./track";
+import { saveListenHistoryToFirestore, loadListenHistoryFromFirestore, subscribeListenHistory } from "./firestoreSync";
+import { auth } from "./firebase";
+import { onAuthStateChanged } from "firebase/auth";
 
 export interface LyricLine { time: number; text: string; }
 
@@ -67,7 +70,6 @@ interface PlayRecord {
 export function recordPlay(track: Track, fromUser = false) {
   if (typeof window === "undefined") return;
   try {
-    // Update artist play counts
     const raw     = localStorage.getItem(LISTEN_HISTORY_KEY);
     const records: Record<string, PlayRecord> = raw ? JSON.parse(raw) : {};
     const key     = track.artistName.toLowerCase().trim();
@@ -87,7 +89,10 @@ export function recordPlay(track: Track, fromUser = false) {
     }
     localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(records));
 
-    // Only save to recent songs when user explicitly plays (not radio auto-queue)
+    // Sync to Firestore if user is signed in
+    const uid = auth.currentUser?.uid;
+    if (uid) saveListenHistoryToFirestore(uid, records).catch(() => {});
+
     if (fromUser) {
       const recentRaw  = localStorage.getItem(RECENT_SONGS_KEY);
       const recent: Track[] = recentRaw ? JSON.parse(recentRaw) : [];
@@ -309,7 +314,34 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const currentSong = state.queue[state.currentIndex] ?? null;
   const hydrated = useRef(false);
 
-  // Hydrate from localStorage on mount
+  // Hydrate listen history from Firestore on sign-in
+  useEffect(() => {
+    if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
+    const unsub = onAuthStateChanged(auth, async (fb) => {
+      if (fb) {
+        try {
+          const remote = await loadListenHistoryFromFirestore(fb.uid);
+          if (remote) {
+            // Merge remote into local (remote may have data from other devices)
+            const localRaw = localStorage.getItem(LISTEN_HISTORY_KEY);
+            const local: Record<string, PlayRecord> = localRaw ? JSON.parse(localRaw) : {};
+            const merged = { ...local };
+            Object.entries(remote).forEach(([k, r]) => {
+              const rec = r as PlayRecord;
+              if (merged[k]) {
+                merged[k] = { ...merged[k], count: Math.max(merged[k].count, rec.count), lastTs: Math.max(merged[k].lastTs, rec.lastTs) };
+              } else {
+                merged[k] = rec;
+              }
+            });
+            localStorage.setItem(LISTEN_HISTORY_KEY, JSON.stringify(merged));
+          }
+        } catch { /* ignore */ }
+      }
+    });
+    return unsub;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   useEffect(() => {
     if (hydrated.current) return;
     hydrated.current = true;

@@ -122,7 +122,13 @@ function mergePlaylists(remote: Playlist[] = [], local: Playlist[] = []): Playli
 function reducer(state: PlaylistState, action: Action): PlaylistState {
   switch (action.type) {
     case "HYDRATE":
-      return mergeState(state, action.payload);
+      return mergeState(state, {
+        ...action.payload,
+        // Always clear liked playlist cover so mosaic renders correctly
+        playlists: action.payload.playlists?.map((p: Playlist) =>
+          p.id === "liked" ? { ...p, cover: "" } : p
+        ),
+      });
 
     case "CREATE_PLAYLIST":
       return { ...state, playlists: [...state.playlists, {
@@ -161,15 +167,14 @@ function reducer(state: PlaylistState, action: Action): PlaylistState {
       const newLiked = exists
         ? state.likedTracks.filter(t => t.id !== action.payload.id)
         : [...state.likedTracks, action.payload];
-      // Use the most recently liked song's artwork as the playlist cover
-      const newCover = newLiked.length > 0 ? newLiked[newLiked.length - 1].artworkUrl100 : "";
       return {
         ...state,
         likedTracks: newLiked,
         playlists: state.playlists.map(p => {
           if (p.id !== "liked") return p;
-          if (exists) return { ...p, tracks: p.tracks.filter(t => t.id !== action.payload.id), cover: newCover };
-          return { ...p, tracks: [...p.tracks, action.payload], cover: newCover };
+          // Always keep cover empty — PlaylistCoverGrid renders 4-tile mosaic automatically
+          if (exists) return { ...p, tracks: p.tracks.filter(t => t.id !== action.payload.id), cover: "" };
+          return { ...p, tracks: [...p.tracks, action.payload], cover: "" };
         }),
       };
     }

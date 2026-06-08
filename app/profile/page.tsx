@@ -5,9 +5,10 @@ import { useAuth } from "@/lib/authContext";
 import { usePlaylists } from "@/lib/playlistContext";
 import { usePlayer } from "@/lib/playerContext";
 import { getTopArtists } from "@/lib/playerContext";
+import { loadListenHistoryFromFirestore, subscribeListenHistory } from "@/lib/firestoreSync";
 import { useRouter } from "next/navigation";
 import {
-  User, LogOut, Edit3, Check, X,
+  User, LogOut, Edit3,
   Heart, ListMusic, Camera, UserMinus, Play, TrendingUp,
 } from "lucide-react";
 import SongRow from "@/components/SongRow";
@@ -57,11 +58,65 @@ export default function ProfilePage() {
   const recentLiked   = plState.likedTracks.slice(-6).reverse();
   const followedArtists = plState.followedArtists ?? [];
 
-  // Top artists from listening history — computed client-side
+  // Top artists — load from localStorage + Firestore, update in real-time
   const [topArtists, setTopArtists] = useState<{ name: string; id: string; image: string; playCount: number }[]>([]);
+
   useEffect(() => {
+    // Load local immediately
     setTopArtists(getTopArtists(8));
-  }, []);
+
+    if (!user?.id) return;
+
+    // Load from Firestore (cross-device data)
+    loadListenHistoryFromFirestore(user.id).then(remote => {
+      if (remote) {
+        // Merge local + remote
+        const local = getTopArtists(100);
+        const merged = new Map<string, { name: string; id: string; image: string; playCount: number }>();
+        local.forEach(a => merged.set(a.name.toLowerCase(), a));
+        Object.values(remote).forEach((r: unknown) => {
+          const rec = r as { artistName: string; artistId: string; image: string; count: number };
+          const k = rec.artistName?.toLowerCase();
+          if (!k) return;
+          const existing = merged.get(k);
+          if (existing) {
+            merged.set(k, { ...existing, playCount: existing.playCount + rec.count });
+          } else {
+            merged.set(k, { name: rec.artistName, id: rec.artistId || rec.artistName, image: rec.image || "", playCount: rec.count });
+          }
+        });
+        const sorted = Array.from(merged.values())
+          .filter(a => a.name && a.playCount > 0)
+          .sort((a, b) => b.playCount - a.playCount)
+          .slice(0, 8);
+        setTopArtists(sorted);
+      }
+    }).catch(() => {});
+
+    // Subscribe to real-time updates
+    const unsub = subscribeListenHistory(user.id, (remote) => {
+      const local = getTopArtists(100);
+      const merged = new Map<string, { name: string; id: string; image: string; playCount: number }>();
+      local.forEach(a => merged.set(a.name.toLowerCase(), a));
+      Object.values(remote).forEach((r: unknown) => {
+        const rec = r as { artistName: string; artistId: string; image: string; count: number };
+        const k = rec.artistName?.toLowerCase();
+        if (!k) return;
+        const existing = merged.get(k);
+        if (existing) {
+          merged.set(k, { ...existing, playCount: Math.max(existing.playCount, rec.count) });
+        } else {
+          merged.set(k, { name: rec.artistName, id: rec.artistId || rec.artistName, image: rec.image || "", playCount: rec.count });
+        }
+      });
+      const sorted = Array.from(merged.values())
+        .filter(a => a.name && a.playCount > 0)
+        .sort((a, b) => b.playCount - a.playCount)
+        .slice(0, 8);
+      setTopArtists(sorted);
+    });
+    return unsub;
+  }, [user?.id]);
 
   return (
     <div className="min-h-full bg-[#121212] pb-12 animate-fade-in">

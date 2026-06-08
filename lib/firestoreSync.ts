@@ -91,3 +91,36 @@ export function debouncedSave(uid: string, data: any) {
   if (timers[uid]) clearTimeout(timers[uid]);
   timers[uid] = setTimeout(() => saveLibraryToFirestore(uid, data), SYNC_DEBOUNCE);
 }
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function saveListenHistoryToFirestore(uid: string, data: any): Promise<void> {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return;
+  try {
+    const ref = doc(db, "users", uid, "data", "listenHistory");
+    await setDoc(ref, { records: data, updatedAt: Date.now() }, { merge: false });
+  } catch { /* ignore */ }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function loadListenHistoryFromFirestore(uid: string): Promise<any | null> {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return null;
+  try {
+    const ref  = doc(db, "users", uid, "data", "listenHistory");
+    const snap = await getDoc(ref);
+    return snap.exists() ? snap.data().records : null;
+  } catch { return null; }
+}
+
+export function subscribeListenHistory(
+  uid: string,
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  cb: (data: any) => void
+): () => void {
+  if (!uid || !process.env.NEXT_PUBLIC_FIREBASE_API_KEY) return () => {};
+  try {
+    const ref = doc(db, "users", uid, "data", "listenHistory");
+    return onSnapshot(ref, snap => {
+      if (snap.exists() && snap.data().records) cb(snap.data().records);
+    });
+  } catch { return () => {}; }
+}
