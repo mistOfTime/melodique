@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { usePlaylists } from "@/lib/playlistContext";
+import { useToast } from "@/components/Toast";
 import { Track, getArtwork } from "@/lib/track";
 import { X, Plus, Check, Music2 } from "lucide-react";
 import Image from "next/image";
@@ -13,13 +14,16 @@ interface Props {
 
 export default function AddToPlaylistModal({ track, onClose }: Props) {
   const { state, addToPlaylist, createPlaylist } = usePlaylists();
+  const { show } = useToast();
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
   const [added, setAdded] = useState<Set<string>>(new Set());
 
-  const handleAdd = (playlistId: string) => {
+  const handleAdd = (playlistId: string, playlistName: string) => {
     addToPlaylist(playlistId, track);
     setAdded(prev => new Set(prev).add(playlistId));
+    show(`Added to ${playlistName}`, { icon: "playlist" });
+    setTimeout(() => onClose(), 800);
   };
 
   const handleCreate = () => {
@@ -28,6 +32,7 @@ export default function AddToPlaylistModal({ track, onClose }: Props) {
     createPlaylist(name);
     setNewName("");
     setCreating(false);
+    show(`Playlist "${name}" created`, { icon: "check" });
   };
 
   return (
@@ -88,7 +93,7 @@ export default function AddToPlaylistModal({ track, onClose }: Props) {
             state.playlists.map(pl => {
               const isAdded = added.has(pl.id) || pl.tracks.some(t => t.id === track.id);
               return (
-                <button key={pl.id} onClick={() => !isAdded && handleAdd(pl.id)}
+                <button key={pl.id} onClick={() => !isAdded && handleAdd(pl.id, pl.name)}
                   className={`w-full flex items-center gap-3 px-5 py-2.5 hover:bg-white/[0.05] transition-colors text-left ${isAdded ? "opacity-60 cursor-default" : ""}`}>
                   <div className="w-9 h-9 rounded-lg overflow-hidden bg-white/10 flex-shrink-0">
                     {pl.cover

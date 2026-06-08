@@ -10,6 +10,7 @@ import MobileNav from "@/components/MobileNav";
 import { usePlayer } from "@/lib/playerContext";
 import { useAuth } from "@/lib/authContext";
 import { User } from "lucide-react";
+import { ToastProvider } from "@/components/Toast";
 import { MelodiqueIcon } from "@/components/MelodiqueLogo";
 import Image from "next/image";
 import Link from "next/link";
@@ -51,6 +52,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const showOwnHeader = PAGES_WITH_OWN_HEADER.some(p => pathname.startsWith(p));
 
   return (
+    <ToastProvider>
     <div className="flex flex-col h-[100dvh] w-screen bg-[#0a0a0f] overflow-hidden">
 
       {/* ── Desktop ───────────────────────────────────────── */}
@@ -116,5 +118,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
 
       <YouTubePlayer />
     </div>
+    </ToastProvider>
   );
 }
