@@ -14,7 +14,6 @@ export default function NowPlayingPanel() {
   const lineRefs        = useRef<(HTMLParagraphElement | null)[]>([]);
   const userScrollingRef = useRef(false);
   const resumeTimer      = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [isUserScrolling, setIsUserScrolling] = useState(false);
   // translateY offset to slide the tape up/down
   const [translateY, setTranslateY] = useState(0);
   // manual scroll offset when user drags
@@ -33,7 +32,6 @@ export default function NowPlayingPanel() {
     const center     = container.clientHeight / 2;
     setTranslateY(center - lineTop - lineHeight / 2);
     setManualOffset(0);
-    setIsUserScrolling(false);
     userScrollingRef.current = false;
   }, [state.currentLyricIndex]);
 
@@ -57,12 +55,10 @@ export default function NowPlayingPanel() {
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       userScrollingRef.current = true;
-      setIsUserScrolling(true);
       setManualOffset(prev => prev + e.deltaY * -1);
       if (resumeTimer.current) clearTimeout(resumeTimer.current);
       resumeTimer.current = setTimeout(() => {
         userScrollingRef.current = false;
-        setIsUserScrolling(false);
         recenter();
       }, 4000);
     };
@@ -74,7 +70,6 @@ export default function NowPlayingPanel() {
   const onTouchStart = (e: React.TouchEvent) => {
     dragStart.current = { y: e.touches[0].clientY, offset: manualOffset };
     userScrollingRef.current = true;
-    setIsUserScrolling(true);
     if (resumeTimer.current) clearTimeout(resumeTimer.current);
   };
   const onTouchMove = (e: React.TouchEvent) => {
@@ -86,7 +81,6 @@ export default function NowPlayingPanel() {
     dragStart.current = null;
     resumeTimer.current = setTimeout(() => {
       userScrollingRef.current = false;
-      setIsUserScrolling(false);
       recenter();
     }, 4000);
   };
@@ -232,20 +226,6 @@ export default function NowPlayingPanel() {
         {/* Bottom fade */}
         <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10"
           style={{ background: "linear-gradient(to top, #0d0d14 0%, transparent 100%)" }} />
-
-        {/* Back to lyrics button */}
-        {isUserScrolling && state.lyrics.length > 0 && (
-          <button
-            onClick={() => {
-              userScrollingRef.current = false;
-              setIsUserScrolling(false);
-              recenter();
-            }}
-            className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-xs font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
-          >
-            <Mic2 size={11} /> Back to lyrics
-          </button>
-        )}
       </div>
     </aside>
   );

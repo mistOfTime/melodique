@@ -10,7 +10,6 @@ export const dynamic = "force-dynamic";
  * Strategy:
  *  - Try many query variations in parallel (original, cleaned, first-artist-only, etc.)
  *  - Prefer synced lyrics over plain lyrics
- *  - Validate results loosely to avoid wrong-song matches
  *  - Cache hits for 24h
  */
 
@@ -53,6 +52,7 @@ function titleVariants(artist: string, title: string): Array<[string, string]> {
     [a1, ct],          // first artist, cleaned title
     [noa, ct],         // drop "the", cleaned title
     [ca, title],       // clean artist, original title
+    [dropThe(strip(artist)), ct], // fully cleaned both
   ];
 
   // Deduplicate
@@ -63,6 +63,23 @@ function titleVariants(artist: string, title: string): Array<[string, string]> {
     seen.add(key);
     return true;
   });
+}
+
+/* ── Validate that a lyric result is likely correct ─────── */
+function isLikelyCorrect(result: { artistName?: string; trackName?: string } | null, artist: string, title: string): boolean {
+  if (!result) return false;
+  // If the result has artist/title metadata, do a loose check
+  const ra = (result.artistName ?? "").toLowerCase();
+  const rt = (result.trackName ?? "").toLowerCase();
+  const fa = firstArtist(artist).toLowerCase();
+  const ct = strip(title).toLowerCase();
+  if (ra && rt) {
+    const artistMatch = ra.includes(fa) || fa.includes(ra) || ra.includes(dropThe(fa)) || dropThe(fa).includes(ra);
+    const titleMatch  = rt.includes(ct) || ct.includes(rt) ||
+                        rt.includes(ct.split(" ")[0]) || strip(rt).includes(strip(ct));
+    return artistMatch || titleMatch;
+  }
+  return true; // No metadata to validate against — trust it
 }
 
 /* ── lrclib ─────────────────────────────────────────────── */
@@ -88,6 +105,19 @@ async function lrclibSearch(q: string) {
     const list = await r.json();
     if (!Array.isArray(list) || !list.length) return null;
     // Prefer synced, then any
+    return list.find((x: { syncedLyrics?: string }) => x.syncedLyrics) ?? list[0];
+  } catch { return null; }
+}
+
+async function lrclibSearchWithArtistTitle(artist: string, title: string) {
+  try {
+    const r = await fetch(
+      `https://lrclib.net/api/search?artist_name=${encodeURIComponent(artist)}&track_name=${encodeURIComponent(title)}`,
+      { signal: AbortSignal.timeout(TO), next: { revalidate: 86400 } }
+    );
+    if (!r.ok) return null;
+    const list = await r.json();
+    if (!Array.isArray(list) || !list.length) return null;
     return list.find((x: { syncedLyrics?: string }) => x.syncedLyrics) ?? list[0];
   } catch { return null; }
 }
@@ -133,16 +163,27 @@ async function spotifyToLrclib(artist: string, title: string) {
     );
     if (!sr.ok) return null;
     const sd = await sr.json();
-    const isrc = sd.tracks?.items?.[0]?.external_ids?.isrc;
+    const track = sd.tracks?.items?.[0];
+    const isrc  = track?.external_ids?.isrc;
     if (!isrc) return null;
+
+    // Try ISRC search on lrclib
     const lr = await fetch(
       `https://lrclib.net/api/search?q=${encodeURIComponent(isrc)}`,
       { signal: AbortSignal.timeout(TO) }
     );
-    if (!lr.ok) return null;
-    const list = await lr.json();
-    if (!Array.isArray(list) || !list.length) return null;
-    return list.find((x: { syncedLyrics?: string }) => x.syncedLyrics) ?? list[0];
+    if (lr.ok) {
+      const list = await lr.json();
+      if (Array.isArray(list) && list.length) {
+        return list.find((x: { syncedLyrics?: string }) => x.syncedLyrics) ?? list[0];
+      }
+    }
+
+    // Also try with the Spotify-returned track name (more accurate than iTunes)
+    if (track.name && track.artists?.[0]?.name) {
+      return await lrclibSearchWithArtistTitle(track.artists[0].name, track.name);
+    }
+    return null;
   } catch { return null; }
 }
 
@@ -157,32 +198,42 @@ export async function GET(req: NextRequest) {
   const fa = firstArtist(artist);
   const ct = strip(title);
 
-  // ── Round 1: all lrclib GET variants + search variants in parallel ──
+  // ── Round 1: all lrclib GET variants in parallel ──
   const lrcGetResults = await Promise.all(
     variants.map(([a, t]) => lrclibGet(a, t))
   );
-  const lrcGetHit = lrcGetResults.find(x => x?.syncedLyrics) ?? lrcGetResults.find(x => x?.plainLyrics);
-  if (lrcGetHit?.syncedLyrics) return ok(lrcGetHit.syncedLyrics, lrcGetHit.plainLyrics ?? null);
+  // Pick the best — prefer synced AND correctly matched
+  const syncedGet = lrcGetResults.find(x => x?.syncedLyrics && isLikelyCorrect(x, artist, title))
+                 ?? lrcGetResults.find(x => x?.syncedLyrics);
+  const plainGet  = lrcGetResults.find(x => x?.plainLyrics && isLikelyCorrect(x, artist, title))
+                 ?? lrcGetResults.find(x => x?.plainLyrics);
 
-  // ── Round 2: lrclib search + plain fallbacks in parallel ──
+  if (syncedGet?.syncedLyrics) return ok(syncedGet.syncedLyrics, syncedGet.plainLyrics ?? null);
+
+  // ── Round 2: lrclib structured search + plain fallbacks in parallel ──
   const [
-    searchHit1, searchHit2, searchHit3,
+    searchHit1, searchHit2, searchHit3, searchHit4,
     ovhHit1, ovhHit2,
     textylHit,
   ] = await Promise.all([
+    lrclibSearchWithArtistTitle(fa, ct),
+    lrclibSearchWithArtistTitle(fa, title),
     lrclibSearch(`${fa} ${ct}`),
-    lrclibSearch(`${ct}`),
-    lrclibSearch(`${artist} ${title}`),
+    lrclibSearch(`${ct} ${fa}`),
     ovh(fa, ct),
     ovh(fa, title),
     textyl(fa, ct),
   ]);
 
-  const searchHit = [searchHit1, searchHit2, searchHit3].find(x => x?.syncedLyrics)
-                 ?? [searchHit1, searchHit2, searchHit3].find(x => x?.plainLyrics);
-  if (searchHit?.syncedLyrics) return ok(searchHit.syncedLyrics, searchHit.plainLyrics ?? null);
-  if (lrcGetHit?.plainLyrics)  return ok(null, lrcGetHit.plainLyrics);
-  if (searchHit?.plainLyrics)  return ok(null, searchHit.plainLyrics);
+  const searchResults = [searchHit1, searchHit2, searchHit3, searchHit4];
+  const searchSynced = searchResults.find(x => x?.syncedLyrics && isLikelyCorrect(x, artist, title))
+                    ?? searchResults.find(x => x?.syncedLyrics);
+  const searchPlain  = searchResults.find(x => x?.plainLyrics && isLikelyCorrect(x, artist, title))
+                    ?? searchResults.find(x => x?.plainLyrics);
+
+  if (searchSynced?.syncedLyrics) return ok(searchSynced.syncedLyrics, searchSynced.plainLyrics ?? null);
+  if (plainGet?.plainLyrics)  return ok(null, plainGet.plainLyrics);
+  if (searchPlain?.plainLyrics)  return ok(null, searchPlain.plainLyrics);
   if (ovhHit1)  return ok(null, ovhHit1 as string);
   if (ovhHit2)  return ok(null, ovhHit2 as string);
   if (textylHit) return ok(null, textylHit as string);
@@ -197,7 +248,7 @@ export async function GET(req: NextRequest) {
   if (words.length > 2) {
     const short = words.slice(0, 3).join(" ");
     const [shortSearch, ovhShort] = await Promise.all([
-      lrclibSearch(`${fa} ${short}`),
+      lrclibSearchWithArtistTitle(fa, short),
       ovh(fa, short),
     ]);
     if (shortSearch?.syncedLyrics) return ok(shortSearch.syncedLyrics, shortSearch.plainLyrics ?? null);

@@ -260,15 +260,17 @@ function reducer(state: PlayerState, action: Action): PlayerState {
 
 function parseLRC(lrc: string): LyricLine[] {
   const lines: LyricLine[] = [];
+  // Parse [mm:ss.xx] or [mm:ss.xxx] timestamps
   for (const line of lrc.split("\n")) {
-    const m = line.match(/\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/);
+    const m = line.match(/\[(\d{1,2}):(\d{2})\.(\d{2,3})\](.*)/);
     if (m) {
       const time = parseInt(m[1]) * 60 + parseFloat(`${m[2]}.${m[3]}`);
       const text = m[4].trim();
       if (text) lines.push({ time, text });
     }
   }
-  return lines;
+  // Remove duplicate timestamps (some LRC files have [00:00.00] header lines)
+  return lines.filter((l, i) => i === 0 || l.time !== lines[i - 1].time);
 }
 
 const videoIdCache = new Map<string, string | null>();
@@ -407,9 +409,10 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   }, [currentSong?.id]);
 
   // Sync active lyric line using real currentTime
+  // Use a 0.3s look-ahead so lyrics highlight just before the line is spoken (Spotify-style)
   useEffect(() => {
     if (!state.lyrics.length) return;
-    const t = state.currentTime;
+    const t = state.currentTime + 0.3; // slight look-ahead
     let idx = 0;
     for (let i = 0; i < state.lyrics.length; i++) {
       if (t >= state.lyrics[i].time) idx = i;

@@ -329,20 +329,6 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
             {/* Bottom fade */}
             <div className="absolute bottom-0 left-0 right-0 h-16 pointer-events-none z-10"
               style={{ background: "linear-gradient(to top, rgba(10,10,15,0.95) 0%, transparent 100%)" }} />
-
-            {/* Back to lyrics */}
-            {isUserScrolling && state.lyrics.length > 0 && (
-              <button
-                onClick={() => {
-                  userScrollingRef.current = false;
-                  setIsUserScrolling(false);
-                  recenter();
-                }}
-                className="absolute bottom-20 left-1/2 -translate-x-1/2 z-20 flex items-center gap-1.5 px-4 py-2 rounded-full bg-green-500/20 border border-green-500/30 text-green-400 text-sm font-medium hover:bg-green-500/30 transition-all whitespace-nowrap"
-              >
-                <Mic2 size={13} /> Back to lyrics
-              </button>
-            )}
           </div>
         )}
 
