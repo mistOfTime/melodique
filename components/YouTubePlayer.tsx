@@ -4,6 +4,7 @@ import { useEffect, useRef, useCallback } from "react";
 import { usePlayer } from "@/lib/playerContext";
 import { getArtwork } from "@/lib/track";
 
+/* ─── YouTube iframe types ──────────────────────────── */
 interface YTPlayer {
   loadVideoById(id: string): void;
   playVideo(): void;
@@ -19,7 +20,10 @@ declare global {
   interface Window {
     YT: {
       Player: new (el: HTMLElement | string, opts: object) => YTPlayer;
-      PlayerState: { UNSTARTED: number; ENDED: number; PLAYING: number; PAUSED: number; BUFFERING: number; CUED: number };
+      PlayerState: {
+        UNSTARTED: number; ENDED: number; PLAYING: number;
+        PAUSED: number; BUFFERING: number; CUED: number;
+      };
     };
     onYouTubeIframeAPIReady(): void;
   }
@@ -54,138 +58,143 @@ function safeCall<T>(player: YTPlayer | null, method: keyof YTPlayer, ...args: u
 
 const CROSSFADE_MS = 400;
 
-/* ── Silent audio keepalive ─────────────────────────────
- * Uses AudioContext to create a real (but silent) looping buffer.
- * Must be started from a user gesture — iOS/Android require this.
- * This keeps the browser's audio session alive when the screen is off.
- */
-let silentAudioCtx: AudioContext | null = null;
-
-function startSilentAudio() {
-  if (silentAudioCtx) return;
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
-    silentAudioCtx = new Ctx();
-    const buf = silentAudioCtx.createBuffer(1, silentAudioCtx.sampleRate, silentAudioCtx.sampleRate);
-    const src = silentAudioCtx.createBufferSource();
-    src.buffer = buf;
-    src.loop = true;
-    const gain = silentAudioCtx.createGain();
-    gain.gain.value = 0.001;
-    src.connect(gain);
-    gain.connect(silentAudioCtx.destination);
-    src.start(0);
-  } catch { /* ignore */ }
-}
-
-function resumeSilentAudio() {
-  if (silentAudioCtx?.state === "suspended") silentAudioCtx.resume().catch(() => {});
-}
-
 export default function YouTubePlayer() {
   const { state, currentSong, next, dispatch } = usePlayer();
+
+  /* ── Native <audio> element — primary for background play ── */
+  const audioRef        = useRef<HTMLAudioElement | null>(null);
+  /* ── YT iframe — fallback when direct URL unavailable ── */
   const divRef          = useRef<HTMLDivElement>(null);
   const ytRef           = useRef<YTPlayer | null>(null);
   const playerReady     = useRef(false);
   const pendingVideoId  = useRef<string | null>(null);
+
   const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
   const fadeTimerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastProgressSet = useRef(0);
-  const prevProgress    = useRef(0);
   const prevVideoId     = useRef<string | null>(null);
   const targetVolume    = useRef(state.volume);
-  // Keep a stable ref to next() so the onStateChange closure always calls the latest version
   const nextRef         = useRef(next);
   const isPlayingRef    = useRef(state.isPlaying);
-  // Tracks whether WE intentionally paused — prevents the S.PAUSED handler from fighting us
   const intentionalPause = useRef(false);
+
+  // "native" = using <audio> element, "iframe" = using YT iframe
+  const modeRef = useRef<"native" | "iframe">("iframe");
+  // Cache of videoId → direct audio URL
+  const audioUrlCache = useRef<Map<string, string | null>>(new Map());
 
   useEffect(() => { nextRef.current = next; }, [next]);
   useEffect(() => { isPlayingRef.current = state.isPlaying; }, [state.isPlaying]);
   useEffect(() => { targetVolume.current = state.volume; }, [state.volume]);
 
-  /* ── Start silent audio on first user tap (required for iOS/Android) ── */
+  /* ── Create <audio> element once ── */
   useEffect(() => {
-    const onFirstInteraction = () => {
-      startSilentAudio();
-      document.removeEventListener("touchstart", onFirstInteraction, true);
-      document.removeEventListener("click",      onFirstInteraction, true);
-    };
-    document.addEventListener("touchstart", onFirstInteraction, { capture: true, passive: true });
-    document.addEventListener("click",      onFirstInteraction, { capture: true, passive: true });
-    return () => {
-      document.removeEventListener("touchstart", onFirstInteraction, true);
-      document.removeEventListener("click",      onFirstInteraction, true);
-    };
-  }, []);
+    const audio = new Audio();
+    audio.preload = "auto";
+    audio.crossOrigin = "anonymous";
+    audioRef.current = audio;
 
-  /* ── Resume when page becomes visible again (home button → back to app) ── */
-  useEffect(() => {
-    const onVisibilityChange = () => {
-      if (document.hidden) return;
-      resumeSilentAudio();
-      if (!isPlayingRef.current || !ytRef.current) return;
-      setTimeout(() => {
-        if (!isPlayingRef.current || !ytRef.current) return;
-        const ps = safeCall<number>(ytRef.current, "getPlayerState");
-        // 1 = PLAYING, 3 = BUFFERING — if neither, force resume
-        if (ps !== 1 && ps !== 3) safeCall(ytRef.current, "playVideo");
-        // Re-sync volume (gets reset on some Android browsers)
-        safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
-      }, 600);
-    };
-    document.addEventListener("visibilitychange", onVisibilityChange);
-    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
+    audio.addEventListener("ended", () => {
+      dispatch({ type: "SET_PLAYING", payload: false });
+      setTimeout(() => nextRef.current(), 300);
+    });
+    audio.addEventListener("canplay", () => {
+      dispatch({ type: "SET_YT_STATUS", payload: "ready" });
+    });
+    audio.addEventListener("error", () => {
+      // Fall back to iframe mode
+      modeRef.current = "iframe";
+      dispatch({ type: "SET_YT_STATUS", payload: "error" });
+      setTimeout(() => nextRef.current(), 1500);
+    });
+    audio.addEventListener("playing", () => {
+      dispatch({ type: "SET_YT_STATUS", payload: "ready" });
+      dispatch({ type: "SET_PLAYING", payload: true });
+    });
 
-  /* Crossfade: fade out → swap → fade in */
-  const crossfadeTo = useCallback((videoId: string) => {
-    if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-    const vol = targetVolume.current;
-    let step = 0;
-    const steps = 8;
-    const intervalMs = CROSSFADE_MS / steps;
-    fadeTimerRef.current = setInterval(() => {
-      step++;
-      const faded = vol * (1 - step / steps);
-      safeCall(ytRef.current, "setVolume", Math.max(0, faded * 100));
-      if (step >= steps) {
-        clearInterval(fadeTimerRef.current!);
-        safeCall(ytRef.current, "setVolume", 0);
-        safeCall(ytRef.current, "loadVideoById", videoId);
-        pendingVideoId.current = null;
-        dispatch({ type: "SET_YT_STATUS", payload: "ready" });
-        setTimeout(() => {
-          safeCall(ytRef.current, "playVideo");
-          let s2 = 0;
-          fadeTimerRef.current = setInterval(() => {
-            s2++;
-            const v = targetVolume.current * (s2 / steps);
-            safeCall(ytRef.current, "setVolume", Math.min(targetVolume.current * 100, v * 100));
-            if (s2 >= steps) {
-              clearInterval(fadeTimerRef.current!);
-              safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
-            }
-          }, intervalMs);
-        }, 150);
+    return () => { audio.pause(); audioRef.current = null; };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* ── Fetch direct audio URL and switch to native mode ── */
+  const tryNativeAudio = useCallback(async (videoId: string) => {
+    // Check cache first
+    if (audioUrlCache.current.has(videoId)) {
+      const cached = audioUrlCache.current.get(videoId);
+      if (cached) {
+        modeRef.current = "native";
+        const audio = audioRef.current;
+        if (!audio) return;
+        audio.src = cached;
+        audio.volume = targetVolume.current;
+        audio.load();
+        if (isPlayingRef.current) audio.play().catch(() => {});
+        return;
       }
-    }, intervalMs);
+      return; // cached as null — use iframe
+    }
+
+    // Fetch from our proxy
+    try {
+      const res = await fetch(`/api/youtube/audio?v=${videoId}`, {
+        signal: AbortSignal.timeout(8000),
+      });
+      const data = res.ok ? await res.json() : { url: null };
+      audioUrlCache.current.set(videoId, data.url ?? null);
+
+      if (data.url) {
+        modeRef.current = "native";
+        const audio = audioRef.current;
+        if (!audio) return;
+        audio.src = data.url;
+        audio.volume = targetVolume.current;
+        audio.load();
+        if (isPlayingRef.current) audio.play().catch(() => {});
+        dispatch({ type: "SET_YT_STATUS", payload: "ready" });
+      }
+      // else stays in iframe mode
+    } catch {
+      audioUrlCache.current.set(videoId, null);
+    }
   }, [dispatch]);
 
-  const loadVideo = useCallback((videoId: string, withFade = false) => {
-    if (playerReady.current && ytRef.current) {
-      if (withFade && prevVideoId.current && isPlayingRef.current) {
-        crossfadeTo(videoId);
-      } else {
-        safeCall(ytRef.current, "loadVideoById", videoId);
-      }
-      pendingVideoId.current = null;
-    } else {
+  /* ── YT iframe setup (fallback) ── */
+  const loadVideoIframe = useCallback((videoId: string, withFade = false) => {
+    if (!playerReady.current || !ytRef.current) {
       pendingVideoId.current = videoId;
+      return;
+    }
+    if (withFade && prevVideoId.current && isPlayingRef.current) {
+      // crossfade
+      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
+      const vol = targetVolume.current;
+      let step = 0;
+      const steps = 8;
+      fadeTimerRef.current = setInterval(() => {
+        step++;
+        safeCall(ytRef.current, "setVolume", Math.max(0, vol * (1 - step / steps) * 100));
+        if (step >= steps) {
+          clearInterval(fadeTimerRef.current!);
+          safeCall(ytRef.current, "setVolume", 0);
+          safeCall(ytRef.current, "loadVideoById", videoId);
+          setTimeout(() => {
+            safeCall(ytRef.current, "playVideo");
+            let s2 = 0;
+            fadeTimerRef.current = setInterval(() => {
+              s2++;
+              safeCall(ytRef.current, "setVolume", Math.min(targetVolume.current * 100, targetVolume.current * (s2 / steps) * 100));
+              if (s2 >= steps) {
+                clearInterval(fadeTimerRef.current!);
+                safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
+              }
+            }, CROSSFADE_MS / steps);
+          }, 150);
+        }
+      }, CROSSFADE_MS / steps);
+    } else {
+      safeCall(ytRef.current, "loadVideoById", videoId);
     }
     prevVideoId.current = videoId;
-  }, [crossfadeTo]);
+  }, []);
 
   const initPlayer = useCallback(() => {
     if (!divRef.current || ytRef.current) return;
@@ -193,9 +202,7 @@ export default function YouTubePlayer() {
       height: "1", width: "1",
       playerVars: {
         autoplay: 0, controls: 0, disablekb: 1,
-        fs: 0, modestbranding: 1,
-        playsinline: 1, // essential for iOS background/inline play
-        rel: 0,
+        fs: 0, modestbranding: 1, playsinline: 1, rel: 0,
         origin: typeof window !== "undefined" ? window.location.origin : "",
       },
       events: {
@@ -213,19 +220,18 @@ export default function YouTubePlayer() {
         },
         onStateChange: (e: { data: number }) => {
           const S = window.YT.PlayerState;
+          if (modeRef.current !== "iframe") return; // ignore if native is active
           if (e.data === S.PLAYING || e.data === S.BUFFERING) {
             dispatch({ type: "SET_YT_STATUS", payload: "ready" });
           }
           if (e.data === S.ENDED) {
-            // Use ref so we always call the latest next() even from stale closure
             dispatch({ type: "SET_PLAYING", payload: false });
             setTimeout(() => nextRef.current(), 300);
           }
           if (e.data === S.PAUSED) {
-            // Only auto-resume if: we intend to be playing AND it wasn't us who paused
             if (isPlayingRef.current && !intentionalPause.current && !document.hidden) {
               setTimeout(() => {
-                if (isPlayingRef.current && !intentionalPause.current) {
+                if (isPlayingRef.current && !intentionalPause.current && modeRef.current === "iframe") {
                   safeCall(ytRef.current, "playVideo");
                 }
               }, 400);
@@ -234,9 +240,9 @@ export default function YouTubePlayer() {
           }
         },
         onError: () => {
+          if (modeRef.current !== "iframe") return;
           dispatch({ type: "SET_YT_STATUS", payload: "error" });
           dispatch({ type: "SET_PLAYING", payload: false });
-          // Auto-skip on error after a moment
           setTimeout(() => nextRef.current(), 1200);
         },
       },
@@ -245,57 +251,97 @@ export default function YouTubePlayer() {
 
   useEffect(() => { ensureYTApi(initPlayer); }, [initPlayer]);
 
-  /* Load new video with crossfade when videoId changes */
+  /* ── When video ID changes: try native first, iframe as fallback ── */
   useEffect(() => {
     if (!state.ytVideoId) return;
     lastProgressSet.current = 0;
     dispatch({ type: "SET_PROGRESS", payload: 0 });
     dispatch({ type: "SET_DURATION", payload: 0 });
-    const isSkip = !!prevVideoId.current && prevVideoId.current !== state.ytVideoId;
-    loadVideo(state.ytVideoId, isSkip);
+    dispatch({ type: "SET_YT_STATUS", payload: "loading" });
+
+    const videoId = state.ytVideoId;
+    const isSkip = !!prevVideoId.current && prevVideoId.current !== videoId;
+    prevVideoId.current = videoId;
+
+    // Reset native audio
+    if (audioRef.current) {
+      audioRef.current.pause();
+      audioRef.current.src = "";
+    }
+    modeRef.current = "iframe"; // reset to iframe while we try to fetch
+
+    // Try native audio URL (non-blocking)
+    tryNativeAudio(videoId);
+
+    // Also load iframe in parallel as fallback
+    loadVideoIframe(videoId, isSkip);
     if (!isSkip && state.isPlaying) {
-      setTimeout(() => safeCall(ytRef.current, "playVideo"), 600);
+      setTimeout(() => {
+        if (modeRef.current === "native" && audioRef.current) {
+          audioRef.current.play().catch(() => {});
+        } else {
+          safeCall(ytRef.current, "playVideo");
+        }
+      }, 600);
     }
   }, [state.ytVideoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Play / pause — mark intentional so S.PAUSED handler doesn't auto-resume */
+  /* ── Play / pause ── */
   useEffect(() => {
-    if (!ytRef.current || state.ytStatus !== "ready") return;
+    if (state.ytStatus !== "ready") return;
     if (state.isPlaying) {
       intentionalPause.current = false;
-      safeCall(ytRef.current, "playVideo");
+      if (modeRef.current === "native" && audioRef.current) {
+        audioRef.current.play().catch(() => {});
+      } else {
+        safeCall(ytRef.current, "playVideo");
+      }
     } else {
       intentionalPause.current = true;
-      safeCall(ytRef.current, "pauseVideo");
+      if (modeRef.current === "native" && audioRef.current) {
+        audioRef.current.pause();
+      } else {
+        safeCall(ytRef.current, "pauseVideo");
+      }
     }
   }, [state.isPlaying, state.ytStatus]);
 
-  /* Volume */
+  /* ── Volume ── */
   useEffect(() => {
     targetVolume.current = state.volume;
-    if (!fadeTimerRef.current) {
+    if (modeRef.current === "native" && audioRef.current) {
+      audioRef.current.volume = state.volume;
+    } else if (!fadeTimerRef.current) {
       safeCall(ytRef.current, "setVolume", state.volume * 100);
     }
   }, [state.volume]);
 
-  /* Seek */
+  /* ── Seek ── */
   useEffect(() => {
-    if (!ytRef.current) return;
     const diff = Math.abs(state.progress - lastProgressSet.current);
     if (diff > 0.015 && state.duration > 0) {
-      safeCall(ytRef.current, "seekTo", state.progress * state.duration, true);
+      const seekTime = state.progress * state.duration;
+      if (modeRef.current === "native" && audioRef.current) {
+        audioRef.current.currentTime = seekTime;
+      } else {
+        safeCall(ytRef.current, "seekTo", seekTime, true);
+      }
     }
-    prevProgress.current = state.progress;
   }, [state.progress, state.duration]);
 
-  /* Progress polling */
+  /* ── Progress polling ── */
   useEffect(() => {
     if (timerRef.current) clearInterval(timerRef.current);
     if (!state.isPlaying) return;
     timerRef.current = setInterval(() => {
-      if (!ytRef.current) return;
-      const dur = safeCall<number>(ytRef.current, "getDuration");
-      const cur = safeCall<number>(ytRef.current, "getCurrentTime");
+      let dur: number | undefined, cur: number | undefined;
+      if (modeRef.current === "native" && audioRef.current) {
+        dur = audioRef.current.duration;
+        cur = audioRef.current.currentTime;
+      } else {
+        dur = safeCall<number>(ytRef.current, "getDuration");
+        cur = safeCall<number>(ytRef.current, "getCurrentTime");
+      }
       if (dur && cur !== undefined && dur > 0 && cur >= 0) {
         const prog = cur / dur;
         lastProgressSet.current = prog;
@@ -307,10 +353,28 @@ export default function YouTubePlayer() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state.isPlaying, dispatch]);
 
-  /* ── Media Session API — lock screen / notification controls ── */
+  /* ── Visibility resume (for iframe fallback) ── */
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      if (document.hidden) return;
+      if (!isPlayingRef.current) return;
+      if (modeRef.current === "native" && audioRef.current) {
+        if (audioRef.current.paused) audioRef.current.play().catch(() => {});
+      } else if (ytRef.current) {
+        setTimeout(() => {
+          const ps = safeCall<number>(ytRef.current, "getPlayerState");
+          if (ps !== 1 && ps !== 3) safeCall(ytRef.current, "playVideo");
+          safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
+        }, 600);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  /* ── Media Session API ── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !currentSong) return;
-
     navigator.mediaSession.metadata = new MediaMetadata({
       title:  currentSong.trackName,
       artist: currentSong.artistName,
@@ -321,28 +385,31 @@ export default function YouTubePlayer() {
         { src: getArtwork(currentSong.artworkUrl100, 512), sizes: "512x512", type: "image/jpeg" },
       ],
     });
-
     navigator.mediaSession.setActionHandler("play", () => {
       intentionalPause.current = false;
       dispatch({ type: "SET_PLAYING", payload: true });
-      safeCall(ytRef.current, "playVideo");
+      if (modeRef.current === "native" && audioRef.current) audioRef.current.play().catch(() => {});
+      else safeCall(ytRef.current, "playVideo");
     });
     navigator.mediaSession.setActionHandler("pause", () => {
       intentionalPause.current = true;
       dispatch({ type: "SET_PLAYING", payload: false });
-      safeCall(ytRef.current, "pauseVideo");
+      if (modeRef.current === "native" && audioRef.current) audioRef.current.pause();
+      else safeCall(ytRef.current, "pauseVideo");
     });
     navigator.mediaSession.setActionHandler("nexttrack",     () => nextRef.current());
     navigator.mediaSession.setActionHandler("previoustrack", () => dispatch({ type: "PREV" }));
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime !== undefined && state.duration > 0) {
         dispatch({ type: "SET_PROGRESS", payload: d.seekTime / state.duration });
-        safeCall(ytRef.current, "seekTo", d.seekTime, true);
+        if (modeRef.current === "native" && audioRef.current) {
+          audioRef.current.currentTime = d.seekTime;
+        } else {
+          safeCall(ytRef.current, "seekTo", d.seekTime, true);
+        }
       }
     });
-
     navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
-
     return () => {
       try {
         (["play","pause","nexttrack","previoustrack","seekto"] as MediaSessionAction[]).forEach(a => {
@@ -353,16 +420,16 @@ export default function YouTubePlayer() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id, state.isPlaying, state.duration]);
 
-  /* ── Sync seek position to OS media controls ── */
+  /* ── Lock screen position sync ── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !state.duration) return;
     try {
       navigator.mediaSession.setPositionState({
-        duration:     state.duration,
+        duration: state.duration,
         playbackRate: 1,
-        position:     Math.min(state.progress * state.duration, state.duration),
+        position: Math.min(state.progress * state.duration, state.duration),
       });
-    } catch { /* not all browsers support this */ }
+    } catch { /* not all browsers support */ }
   }, [state.progress, state.duration]);
 
   return (
