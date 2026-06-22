@@ -423,102 +423,84 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [state.currentTime, state.lyrics, state.currentLyricIndex]);
 
-  // Genre radio — when within 2 songs of queue end, fetch more genre-matched songs
-  const radioFetching = useRef(false);
+  // ── Smart Radio System ─────────────────────────────────────────
+  // Maintains a 50-song play history to avoid replays.
+  // Pre-fills 20 recommended songs in advance using /api/radio.
+  // Uses Spotify Recommendations API → Spotify Search → iTunes charts as fallback.
+  const radioFetching    = useRef(false);
+  const playHistoryRef   = useRef<string[]>([]); // last 50 played track IDs
+
+  // Track every played song in history
+  useEffect(() => {
+    if (!currentSong) return;
+    playHistoryRef.current = [
+      currentSong.id,
+      ...playHistoryRef.current.filter(id => id !== currentSong.id),
+    ].slice(0, 50);
+  }, [currentSong?.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Trigger radio fill: keep at least 8 songs ahead, pre-fill up to 20
   useEffect(() => {
     if (!currentSong) return;
     const remaining = state.queue.length - 1 - state.currentIndex;
-    if (remaining > 2 || radioFetching.current) return;
+    if (remaining > 8 || radioFetching.current) return;
 
-    const genre  = currentSong.primaryGenreName ?? "";
+    const genre  = currentSong.primaryGenreName || "Pop";
     const artist = currentSong.artistName ?? "";
-    const lang   = /[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
+    const track  = currentSong.trackName ?? "";
 
-    // Popular artist + era queries per genre — 2000s to 2026
-    const GENRE_POPULAR: Record<string, string[]> = {
-      "Metal":        ["Metallica Master of Puppets", "Slayer Raining Blood", "Iron Maiden Run to the Hills", "Pantera Walk", "Black Sabbath Paranoid", "Lamb of God popular", "Megadeth Symphony of Destruction"],
-      "Nu-Metal":     ["Linkin Park In the End", "Korn Freak on a Leash", "System of a Down Chop Suey", "Slipknot Duality", "Papa Roach Last Resort", "Limp Bizkit Nookie", "Disturbed Down with the Sickness"],
-      "Hard Rock":    ["AC DC Back in Black", "Guns N Roses Welcome to the Jungle", "Aerosmith Dream On", "Led Zeppelin Stairway to Heaven", "Bon Jovi Livin on a Prayer", "Queen Bohemian Rhapsody", "Van Halen Jump"],
-      "Alternative":  ["Nirvana Smells Like Teen Spirit", "Foo Fighters Best of You", "Pearl Jam Alive", "Soundgarden Black Hole Sun", "Alice in Chains Rooster", "Red Hot Chili Peppers Californication", "Stone Temple Pilots Plush"],
-      "Indie Rock":   ["Arctic Monkeys Do I Wanna Know", "The Strokes Last Nite", "Tame Impala The Less I Know the Better", "Radiohead Creep", "The 1975 Somebody Else", "Vampire Weekend A Punk", "Interpol Obstacle 1"],
-      "Rock":         ["Green Day Boulevard of Broken Dreams", "The Killers Mr Brightside", "Coldplay The Scientist", "U2 With or Without You", "Muse Supermassive Black Hole", "Oasis Wonderwall", "Beck Loser"],
-      "Metalcore":    ["Bring Me The Horizon Throne", "Asking Alexandria The Final Episode", "A Day To Remember Homesick", "Of Mice and Men popular", "Parkway Drive Carrion", "August Burns Red popular"],
-      "Emo":          ["My Chemical Romance Welcome to the Black Parade", "Fall Out Boy Sugar We're Goin Down", "Panic at the Disco I Write Sins Not Tragedies", "Dashboard Confessional Vindicated", "Taking Back Sunday MakeDamnSure"],
-      "Punk":         ["Green Day American Idiot", "Blink-182 All the Small Things", "Sum 41 Fat Lip", "The Offspring Come Out and Play", "Bad Religion popular", "NOFX popular"],
-      "Pop Punk":     ["Paramore Misery Business", "New Found Glory popular", "Simple Plan Perfect", "Good Charlotte The Anthem", "All Time Low Dear Maria Count Me In"],
+    // Detect Japanese/Korean — override genre for better results
+    const isJapanese = /[\u3040-\u30FF\u4E00-\u9FFF]/.test(artist + track);
+    const isKorean   = /[\uAC00-\uD7A3]/.test(artist + track);
+    const effectiveGenre = isKorean ? "K-Pop" : isJapanese ? "J-Pop" : genre;
 
-      "Hip-Hop/Rap":  ["Drake God's Plan", "Kendrick Lamar HUMBLE", "J Cole No Role Modelz", "Travis Scott Sicko Mode", "Post Malone Rockstar", "Cardi B WAP", "Nicki Minaj Super Bass", "Kanye West Gold Digger", "Jay-Z 99 Problems", "Lil Wayne How to Love", "Wiz Khalifa Work Hard Play Hard", "Meek Mill Dreams and Nightmares"],
-      "Hip-Hop":      ["Eminem Lose Yourself", "Jay Z Empire State of Mind", "Lil Wayne A Milli", "50 Cent In Da Club", "Snoop Dogg Beautiful", "Outkast Hey Ya", "Missy Elliott Work It", "Ludacris Stand Up", "T.I. Whatever You Like", "Fabolous Make Me Better", "Rick Ross Stay Schemin", "Big Sean Blessings"],
-      "Rap":          ["21 Savage Rockstar", "Future Mask Off", "Lil Uzi Vert XO Tour Llif3", "Roddy Ricch The Box", "Gunna Drip Too Hard", "Young Thug Wyclef Jean", "Playboi Carti Magnolia"],
-      "Trap":         ["Migos Bad and Boujee", "Gucci Mane popular", "Chief Keef I Don't Like", "Fetty Wap Trap Queen", "2 Chainz No Lie", "Rae Sremmurd No Flex Zone"],
+    // Build exclude list: current queue IDs + play history
+    const queueIds    = state.queue.map((s: Track) => s.id);
+    const recentIds   = playHistoryRef.current;
+    const excludeIds  = Array.from(new Set([...queueIds, ...recentIds])).slice(0, 100);
 
-      "R&B/Soul":     ["Ne-Yo So Sick", "Mariah Carey We Belong Together", "Usher Yeah", "Beyonce Crazy in Love", "Alicia Keys No One", "John Legend All of Me", "Bruno Mars Treasure", "The Weeknd Earned It", "SZA Kill Bill", "Frank Ocean Thinkin Bout You", "Mary J Blige Real Love", "R Kelly Ignition", "Destiny's Child Say My Name"],
-      "R&B":          ["Ne-Yo Because of You", "Mariah Carey Obsessed", "Usher Confessions Part II", "Chris Brown No Guidance", "Trey Songz Mr Steal Your Girl", "Mario Let Me Love You", "Omarion Ice Box", "Ciara Goodies", "Fantasia When I See U", "Tank When We", "Ginuwine Pony", "Joe All That I Am", "Maxwell Fortunate"],
-      "Soul":         ["Amy Winehouse Back to Black", "Adele Rolling in the Deep", "Sam Cooke A Change Is Gonna Come", "Marvin Gaye Sexual Healing", "Al Green Lets Stay Together", "Stevie Wonder Superstition", "Aretha Franklin Respect", "Ray Charles Georgia on My Mind", "Otis Redding Try a Little Tenderness", "Bill Withers Lovely Day"],
-
-      "Pop":          ["Taylor Swift Shake It Off", "Dua Lipa Levitating", "Ariana Grande thank u next", "Ed Sheeran Shape of You", "Harry Styles As It Was", "Billie Eilish Bad Guy", "Olivia Rodrigo drivers license", "Sabrina Carpenter Espresso"],
-      "Indie Pop":    ["Clairo Pretty Girl", "Rex Orange County Loving Is Easy", "Still Woozy Goodie Bag", "Phoebe Bridgers Motion Sickness", "Maggie Rogers Alaska"],
-      "Dance Pop":    ["Doja Cat Say So", "Charli XCX Boom Clap", "Bebe Rexha Meant to Be", "Lizzo Truth Hurts", "Meghan Trainor All About That Bass"],
-      "Teen Pop":     ["One Direction What Makes You Beautiful", "Justin Bieber Baby", "Miley Cyrus Wrecking Ball", "Selena Gomez Come and Get It"],
-
-      "Electronic":   ["Daft Punk Get Lucky", "Calvin Harris Summer", "Martin Garrix Animals", "Avicii Wake Me Up", "Zedd Clarity", "Flume Holdin On", "Odesza A Moment Apart"],
-      "Dance":        ["The Chainsmokers Closer", "David Guetta Titanium", "Kygo Firestone", "Clean Bandit Rather Be", "Marshmello Happier", "Major Lazer Lean On"],
-      "House":        ["Fisher Losing It", "Chris Lake popular", "Eric Prydz Call On Me", "Disclosure Latch", "Duke Dumont I Got U"],
-      "EDM":          ["Skrillex Bangarang", "Deadmau5 Ghosts n Stuff", "Porter Robinson Language", "Bassnectar Lights popular", "Excision popular"],
-      "Lo-Fi":        ["lofi hip hop study beats popular", "Nujabes Feather", "J Dilla Donuts", "Tycho Awake", "Bonobo Kiara"],
-
-      "K-Pop":        ["BTS Dynamite", "BLACKPINK How You Like That", "NewJeans Hype Boy", "aespa Savage", "IVE Love Dive", "TWICE Cheer Up", "EXO Call Me Baby", "Stray Kids Miroh"],
-      "J-Pop":        ["Yoasobi Idol", "Official Hige Dandism Subtitle", "Ado Usseewa", "Fujii Kaze Shinunoga E-Wa", "King Gnu Hakujitsu", "Eve Heart wa Kaerarenai", "Kenshi Yonezu Lemon"],
-      "J-Rock":       ["ONE OK ROCK Wherever You Are", "Radwimps Nandemonaiya", "My First Story popular", "SiM The Answer", "Maximum the Hormone popular"],
-      "Anime":        ["LiSA Gurenge Demon Slayer", "Aimer Zankyou Reference Attack on Titan", "Asian Kung Fu Generation Rewrite", "Hiroyuki Sawano popular anime ost", "Yoko Kanno popular"],
-      "City Pop":     ["Mariya Takeuchi Plastic Love", "Tatsuro Yamashita Ride on Time", "Anri I Can't Stop the Loneliness", "Miki Matsubara Stay With Me"],
-
-      "Latin":        ["Bad Bunny Dakiti", "J Balvin Ginza", "Ozuna Taki Taki", "Rauw Alejandro Todo De Ti", "Daddy Yankee Gasolina", "Shakira Hips Don't Lie", "Maluma Hawai"],
-      "Reggaeton":    ["Don Omar Danza Kuduro", "Nicky Jam El Perdon", "CNCO Reggaeton Lento", "Farruko Pepas"],
-      "Classical":    ["Beethoven Symphony No 5 popular", "Mozart Eine Kleine Nachtmusik", "Chopin Nocturne Op 9", "Bach Air on the G String", "Debussy Clair de Lune"],
-      "Jazz":         ["Miles Davis Kind of Blue", "John Coltrane A Love Supreme", "Dave Brubeck Take Five", "Thelonious Monk Round Midnight", "Norah Jones Come Away with Me"],
-      "Country":      ["Morgan Wallen Whiskey Glasses", "Luke Combs Beautiful Crazy", "Zach Bryan American Heartbreak", "Chris Stapleton Tennessee Whiskey", "Blake Shelton God's Country"],
-      "Reggae":       ["Bob Marley No Woman No Cry", "Sean Paul Temperature", "Damian Marley Road to Zion", "Protoje Who Knows"],
-      "Blues":        ["B.B. King The Thrill Is Gone", "Eric Clapton Layla", "Stevie Ray Vaughan Pride and Joy", "Robert Johnson Cross Road Blues"],
-    };
-
-    let queries: string[] = [];
-
-    if (lang) {
-      const isKorean = /[\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
-      queries = isKorean ? GENRE_POPULAR["K-Pop"]! : GENRE_POPULAR["J-Pop"]!;
-    } else {
-      const genreLower = genre.toLowerCase();
-      const matchedKey = Object.keys(GENRE_POPULAR).find(k =>
-        genreLower.includes(k.toLowerCase()) || k.toLowerCase().includes(genreLower)
-      );
-      if (matchedKey) {
-        queries = GENRE_POPULAR[matchedKey]!;
-      } else if (genre) {
-        queries = [`${genre} popular hits 2000s 2010s 2020s`, `best ${genre} songs popular`, `${artist} similar artists popular`];
-      } else {
-        queries = [`${artist} similar popular songs`, `popular music 2020s hits`];
-      }
-    }
-
-    // Pick a random query from the pool
-    const query = queries[Math.floor(Math.random() * queries.length)];
-    if (!query) return;
+    // Artist frequency check — avoid same artist more than twice in next 10
+    const upcomingArtists = state.queue
+      .slice(state.currentIndex + 1, state.currentIndex + 11)
+      .map((s: Track) => s.artistName.toLowerCase());
+    const artistCounts = new Map<string, number>();
+    upcomingArtists.forEach(a => artistCounts.set(a, (artistCounts.get(a) ?? 0) + 1));
 
     radioFetching.current = true;
-    fetch(`/api/music/search?q=${encodeURIComponent(query)}&limit=30`)
+
+    const params = new URLSearchParams({
+      artist:  artist,
+      track:   track,
+      genre:   effectiveGenre,
+      limit:   "25",
+      exclude: excludeIds.join(","),
+    });
+
+    fetch(`/api/radio?${params.toString()}`)
       .then(r => r.json())
       .then(data => {
-        if (!data.results?.length) return;
-        const incoming: Track[] = data.results.map(apiToTrack);
-        // Only add tracks that have artwork
-        const withArt = incoming.filter((s: Track) => s.artworkUrl100 && s.artworkUrl100.length > 10);
-        const existingIds = new Set(state.queue.map((s: Track) => s.id));
-        const fresh = withArt.filter((s: Track) => !existingIds.has(s.id));
-        if (fresh.length > 0) {
-          const shuffled = [...fresh].sort(() => Math.random() - 0.5);
-          shuffled.forEach((s: Track) => dispatch({ type: "ADD_TO_QUEUE", payload: s }));
-        }
+        const incoming: Track[] = (data.tracks ?? []).map(apiToTrack);
+
+        // Final filtering: ensure artwork, not in history, not duplicate artist too often
+        const existingSet = new Set(queueIds);
+        const historySet  = new Set(recentIds);
+
+        const filtered = incoming.filter((s: Track) => {
+          if (!s.artworkUrl100 || s.artworkUrl100.length < 10) return false;
+          if (existingSet.has(s.id)) return false;
+          if (historySet.has(s.id)) return false;
+          // Max 2 of same artist in upcoming queue
+          const count = artistCounts.get(s.artistName.toLowerCase()) ?? 0;
+          if (count >= 2) return false;
+          artistCounts.set(s.artistName.toLowerCase(), count + 1);
+          existingSet.add(s.id);
+          return true;
+        });
+
+        // Add up to 20 fresh songs to queue
+        filtered.slice(0, 20).forEach((s: Track) =>
+          dispatch({ type: "ADD_TO_QUEUE", payload: s })
+        );
       })
       .catch(() => {})
       .finally(() => { radioFetching.current = false; });
