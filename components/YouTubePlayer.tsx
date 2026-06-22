@@ -4,7 +4,6 @@ import { useEffect, useRef, useCallback } from "react";
 import { usePlayer } from "@/lib/playerContext";
 import { getArtwork } from "@/lib/track";
 
-/* ─── YouTube iframe types ──────────────────────────── */
 interface YTPlayer {
   loadVideoById(id: string): void;
   playVideo(): void;
@@ -61,88 +60,86 @@ const CROSSFADE_MS = 400;
 export default function YouTubePlayer() {
   const { state, currentSong, next, dispatch } = usePlayer();
 
-  /* ── Native <audio> element — primary for background play ── */
-  const audioRef        = useRef<HTMLAudioElement | null>(null);
-  /* ── YT iframe — fallback when direct URL unavailable ── */
-  const divRef          = useRef<HTMLDivElement>(null);
-  const ytRef           = useRef<YTPlayer | null>(null);
-  const playerReady     = useRef(false);
-  const pendingVideoId  = useRef<string | null>(null);
-
-  const timerRef        = useRef<ReturnType<typeof setInterval> | null>(null);
-  const fadeTimerRef    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const lastProgressSet = useRef(0);
-  const prevVideoId     = useRef<string | null>(null);
-  const targetVolume    = useRef(state.volume);
-  const nextRef         = useRef(next);
-  const isPlayingRef    = useRef(state.isPlaying);
+  const audioRef         = useRef<HTMLAudioElement | null>(null);
+  const divRef           = useRef<HTMLDivElement>(null);
+  const ytRef            = useRef<YTPlayer | null>(null);
+  const playerReady      = useRef(false);
+  const pendingVideoId   = useRef<string | null>(null);
+  const timerRef         = useRef<ReturnType<typeof setInterval> | null>(null);
+  const fadeTimerRef     = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastProgressSet  = useRef(0);
+  const prevVideoId      = useRef<string | null>(null);
+  const targetVolume     = useRef(state.volume);
+  const nextRef          = useRef(next);
+  const isPlayingRef     = useRef(state.isPlaying);
   const intentionalPause = useRef(false);
 
-  // "native" = using <audio> element, "iframe" = using YT iframe
+  // Which source is currently active — ONLY one plays at a time
   const modeRef = useRef<"native" | "iframe">("iframe");
-  // Cache of videoId → direct audio URL
+  // videoId currently being played — used to guard stale callbacks
+  const activeVideoId = useRef<string | null>(null);
   const audioUrlCache = useRef<Map<string, string | null>>(new Map());
 
   useEffect(() => { nextRef.current = next; }, [next]);
   useEffect(() => { isPlayingRef.current = state.isPlaying; }, [state.isPlaying]);
   useEffect(() => { targetVolume.current = state.volume; }, [state.volume]);
 
-  /* ── Create <audio> element once ── */
+  /* ── Create native <audio> once ── */
   useEffect(() => {
     const audio = new Audio();
     audio.preload = "auto";
-    audio.crossOrigin = "anonymous";
     audioRef.current = audio;
 
     audio.addEventListener("ended", () => {
+      // Only fire if this audio element is the active source
+      if (modeRef.current !== "native") return;
       dispatch({ type: "SET_PLAYING", payload: false });
       setTimeout(() => nextRef.current(), 300);
     });
     audio.addEventListener("canplay", () => {
+      if (modeRef.current !== "native") return;
       dispatch({ type: "SET_YT_STATUS", payload: "ready" });
-    });
-    audio.addEventListener("error", () => {
-      // Fall back to iframe mode
-      modeRef.current = "iframe";
-      dispatch({ type: "SET_YT_STATUS", payload: "error" });
-      setTimeout(() => nextRef.current(), 1500);
     });
     audio.addEventListener("playing", () => {
+      if (modeRef.current !== "native") return;
       dispatch({ type: "SET_YT_STATUS", payload: "ready" });
-      dispatch({ type: "SET_PLAYING", payload: true });
+    });
+    // Don't auto-next on audio error — just fall back silently to iframe
+    audio.addEventListener("error", () => {
+      if (modeRef.current !== "native") return;
+      modeRef.current = "iframe";
     });
 
     return () => { audio.pause(); audioRef.current = null; };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* ── Fetch direct audio URL and switch to native mode ── */
+  /* ── Try fetching direct audio URL (non-blocking) ── */
   const tryNativeAudio = useCallback(async (videoId: string) => {
-    // Check cache first
     if (audioUrlCache.current.has(videoId)) {
       const cached = audioUrlCache.current.get(videoId);
-      if (cached) {
+      if (cached && activeVideoId.current === videoId) {
         modeRef.current = "native";
+        // Stop iframe
+        safeCall(ytRef.current, "pauseVideo");
         const audio = audioRef.current;
         if (!audio) return;
         audio.src = cached;
         audio.volume = targetVolume.current;
         audio.load();
         if (isPlayingRef.current) audio.play().catch(() => {});
-        return;
       }
-      return; // cached as null — use iframe
+      return;
     }
-
-    // Fetch from our proxy
     try {
       const res = await fetch(`/api/youtube/audio?v=${videoId}`, {
         signal: AbortSignal.timeout(8000),
       });
       const data = res.ok ? await res.json() : { url: null };
       audioUrlCache.current.set(videoId, data.url ?? null);
-
-      if (data.url) {
+      // Only apply if this video is still what we want to play
+      if (data.url && activeVideoId.current === videoId) {
         modeRef.current = "native";
+        safeCall(ytRef.current, "pauseVideo"); // stop iframe
         const audio = audioRef.current;
         if (!audio) return;
         audio.src = data.url;
@@ -151,51 +148,10 @@ export default function YouTubePlayer() {
         if (isPlayingRef.current) audio.play().catch(() => {});
         dispatch({ type: "SET_YT_STATUS", payload: "ready" });
       }
-      // else stays in iframe mode
-    } catch {
-      audioUrlCache.current.set(videoId, null);
-    }
+    } catch { /* keep iframe mode */ }
   }, [dispatch]);
 
-  /* ── YT iframe setup (fallback) ── */
-  const loadVideoIframe = useCallback((videoId: string, withFade = false) => {
-    if (!playerReady.current || !ytRef.current) {
-      pendingVideoId.current = videoId;
-      return;
-    }
-    if (withFade && prevVideoId.current && isPlayingRef.current) {
-      // crossfade
-      if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-      const vol = targetVolume.current;
-      let step = 0;
-      const steps = 8;
-      fadeTimerRef.current = setInterval(() => {
-        step++;
-        safeCall(ytRef.current, "setVolume", Math.max(0, vol * (1 - step / steps) * 100));
-        if (step >= steps) {
-          clearInterval(fadeTimerRef.current!);
-          safeCall(ytRef.current, "setVolume", 0);
-          safeCall(ytRef.current, "loadVideoById", videoId);
-          setTimeout(() => {
-            safeCall(ytRef.current, "playVideo");
-            let s2 = 0;
-            fadeTimerRef.current = setInterval(() => {
-              s2++;
-              safeCall(ytRef.current, "setVolume", Math.min(targetVolume.current * 100, targetVolume.current * (s2 / steps) * 100));
-              if (s2 >= steps) {
-                clearInterval(fadeTimerRef.current!);
-                safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
-              }
-            }, CROSSFADE_MS / steps);
-          }, 150);
-        }
-      }, CROSSFADE_MS / steps);
-    } else {
-      safeCall(ytRef.current, "loadVideoById", videoId);
-    }
-    prevVideoId.current = videoId;
-  }, []);
-
+  /* ── YT iframe init ── */
   const initPlayer = useCallback(() => {
     if (!divRef.current || ytRef.current) return;
     ytRef.current = new window.YT.Player(divRef.current, {
@@ -219,8 +175,9 @@ export default function YouTubePlayer() {
           }
         },
         onStateChange: (e: { data: number }) => {
+          // Ignore iframe events when native audio is active
+          if (modeRef.current === "native") return;
           const S = window.YT.PlayerState;
-          if (modeRef.current !== "iframe") return; // ignore if native is active
           if (e.data === S.PLAYING || e.data === S.BUFFERING) {
             dispatch({ type: "SET_YT_STATUS", payload: "ready" });
           }
@@ -251,39 +208,62 @@ export default function YouTubePlayer() {
 
   useEffect(() => { ensureYTApi(initPlayer); }, [initPlayer]);
 
-  /* ── When video ID changes: try native first, iframe as fallback ── */
+  /* ── When video ID changes: load iframe first, try native in background ── */
   useEffect(() => {
     if (!state.ytVideoId) return;
+    const videoId = state.ytVideoId;
+
+    // Mark this as the active video
+    activeVideoId.current = videoId;
+
     lastProgressSet.current = 0;
     dispatch({ type: "SET_PROGRESS", payload: 0 });
     dispatch({ type: "SET_DURATION", payload: 0 });
     dispatch({ type: "SET_YT_STATUS", payload: "loading" });
 
-    const videoId = state.ytVideoId;
-    const isSkip = !!prevVideoId.current && prevVideoId.current !== videoId;
-    prevVideoId.current = videoId;
-
-    // Reset native audio
+    // Stop native audio from previous song
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.src = "";
     }
-    modeRef.current = "iframe"; // reset to iframe while we try to fetch
+    // Reset to iframe mode — native will take over if URL fetch succeeds
+    modeRef.current = "iframe";
+    intentionalPause.current = false;
 
-    // Try native audio URL (non-blocking)
-    tryNativeAudio(videoId);
-
-    // Also load iframe in parallel as fallback
-    loadVideoIframe(videoId, isSkip);
-    if (!isSkip && state.isPlaying) {
-      setTimeout(() => {
-        if (modeRef.current === "native" && audioRef.current) {
-          audioRef.current.play().catch(() => {});
-        } else {
-          safeCall(ytRef.current, "playVideo");
-        }
-      }, 600);
+    // Load iframe immediately (reliable fallback)
+    const isSkip = !!prevVideoId.current && prevVideoId.current !== videoId;
+    if (playerReady.current && ytRef.current) {
+      if (isSkip && isPlayingRef.current && fadeTimerRef.current === null) {
+        // Quick crossfade on skip
+        const vol = targetVolume.current;
+        let step = 0;
+        const steps = 6;
+        fadeTimerRef.current = setInterval(() => {
+          step++;
+          safeCall(ytRef.current, "setVolume", Math.max(0, vol * (1 - step / steps) * 100));
+          if (step >= steps) {
+            clearInterval(fadeTimerRef.current!);
+            fadeTimerRef.current = null;
+            safeCall(ytRef.current, "loadVideoById", videoId);
+            setTimeout(() => {
+              if (modeRef.current === "iframe") safeCall(ytRef.current, "playVideo");
+              safeCall(ytRef.current, "setVolume", vol * 100);
+            }, 150);
+          }
+        }, CROSSFADE_MS / steps);
+      } else {
+        safeCall(ytRef.current, "loadVideoById", videoId);
+        if (state.isPlaying) setTimeout(() => {
+          if (modeRef.current === "iframe") safeCall(ytRef.current, "playVideo");
+        }, 500);
+      }
+    } else {
+      pendingVideoId.current = videoId;
     }
+    prevVideoId.current = videoId;
+
+    // Try native audio in background — will take over if successful
+    tryNativeAudio(videoId);
   }, [state.ytVideoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Play / pause ── */
@@ -320,11 +300,11 @@ export default function YouTubePlayer() {
   useEffect(() => {
     const diff = Math.abs(state.progress - lastProgressSet.current);
     if (diff > 0.015 && state.duration > 0) {
-      const seekTime = state.progress * state.duration;
+      const t = state.progress * state.duration;
       if (modeRef.current === "native" && audioRef.current) {
-        audioRef.current.currentTime = seekTime;
+        audioRef.current.currentTime = t;
       } else {
-        safeCall(ytRef.current, "seekTo", seekTime, true);
+        safeCall(ytRef.current, "seekTo", t, true);
       }
     }
   }, [state.progress, state.duration]);
@@ -335,14 +315,14 @@ export default function YouTubePlayer() {
     if (!state.isPlaying) return;
     timerRef.current = setInterval(() => {
       let dur: number | undefined, cur: number | undefined;
-      if (modeRef.current === "native" && audioRef.current) {
+      if (modeRef.current === "native" && audioRef.current && audioRef.current.src) {
         dur = audioRef.current.duration;
         cur = audioRef.current.currentTime;
       } else {
         dur = safeCall<number>(ytRef.current, "getDuration");
         cur = safeCall<number>(ytRef.current, "getCurrentTime");
       }
-      if (dur && cur !== undefined && dur > 0 && cur >= 0) {
+      if (dur && cur !== undefined && isFinite(dur) && dur > 0 && cur >= 0) {
         const prog = cur / dur;
         lastProgressSet.current = prog;
         dispatch({ type: "SET_PROGRESS",     payload: prog });
@@ -353,11 +333,10 @@ export default function YouTubePlayer() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state.isPlaying, dispatch]);
 
-  /* ── Visibility resume (for iframe fallback) ── */
+  /* ── Visibility resume ── */
   useEffect(() => {
     const onVisibilityChange = () => {
-      if (document.hidden) return;
-      if (!isPlayingRef.current) return;
+      if (document.hidden || !isPlayingRef.current) return;
       if (modeRef.current === "native" && audioRef.current) {
         if (audioRef.current.paused) audioRef.current.play().catch(() => {});
       } else if (ytRef.current) {
@@ -402,11 +381,8 @@ export default function YouTubePlayer() {
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime !== undefined && state.duration > 0) {
         dispatch({ type: "SET_PROGRESS", payload: d.seekTime / state.duration });
-        if (modeRef.current === "native" && audioRef.current) {
-          audioRef.current.currentTime = d.seekTime;
-        } else {
-          safeCall(ytRef.current, "seekTo", d.seekTime, true);
-        }
+        if (modeRef.current === "native" && audioRef.current) audioRef.current.currentTime = d.seekTime;
+        else safeCall(ytRef.current, "seekTo", d.seekTime, true);
       }
     });
     navigator.mediaSession.playbackState = state.isPlaying ? "playing" : "paused";
@@ -420,7 +396,7 @@ export default function YouTubePlayer() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id, state.isPlaying, state.duration]);
 
-  /* ── Lock screen position sync ── */
+  /* ── Lock screen position ── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !state.duration) return;
     try {
@@ -429,7 +405,7 @@ export default function YouTubePlayer() {
         playbackRate: 1,
         position: Math.min(state.progress * state.duration, state.duration),
       });
-    } catch { /* not all browsers support */ }
+    } catch { /* ignore */ }
   }, [state.progress, state.duration]);
 
   return (
