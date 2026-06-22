@@ -210,13 +210,13 @@ export default function ProfilePage() {
                     {artist.image
                       ? <Image src={artist.image} alt={artist.name} fill className="object-cover group-hover:scale-105 transition-transform" />
                       : <div className="w-full h-full flex items-center justify-center text-3xl font-black text-white/20">{artist.name[0]}</div>}
-                    {/* Rank badge */}
-                    <div className="absolute top-0 left-0 w-6 h-6 rounded-full bg-[#121212] flex items-center justify-center m-1">
-                      <span className="text-[10px] font-black text-white/60">#{rank + 1}</span>
-                    </div>
                   </div>
-                  <p className="text-sm font-semibold text-white text-center truncate w-full">{artist.name}</p>
-                  <p className="text-xs text-white/40">{artist.playCount} play{artist.playCount !== 1 ? "s" : ""}</p>
+                  {/* Spotify-style rank — white number, left-aligned under image */}
+                  <div className="w-full flex items-baseline gap-1.5">
+                    <span className="text-base font-black text-white leading-none">{rank + 1}</span>
+                    <p className="text-sm font-semibold text-white truncate flex-1">{artist.name}</p>
+                  </div>
+                  <p className="text-xs text-white/40 w-full">{artist.playCount} play{artist.playCount !== 1 ? "s" : ""}</p>
                 </Link>
               ))}
             </div>
