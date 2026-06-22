@@ -273,22 +273,29 @@ function parseLRC(lrc: string): LyricLine[] {
   return lines.filter((l, i) => i === 0 || l.time !== lines[i - 1].time);
 }
 
-const videoIdCache = new Map<string, string | null>();
+// Cache video IDs — null results expire after 3 minutes so we retry
+const videoIdCache = new Map<string, { id: string | null; ts: number }>();
+const VID_HIT_TTL  = 3600 * 1000 * 6; // 6h for found IDs
+const VID_MISS_TTL = 60 * 1000 * 3;   // 3min for misses
 
 async function fetchYouTubeId(artist: string, title: string, id: string): Promise<string | null> {
-  if (videoIdCache.has(id)) return videoIdCache.get(id)!;
+  const cached = videoIdCache.get(id);
+  if (cached) {
+    const ttl = cached.id ? VID_HIT_TTL : VID_MISS_TTL;
+    if (Date.now() - cached.ts < ttl) return cached.id;
+  }
   try {
     const res = await fetch(
       `/api/ytid?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`,
-      { signal: AbortSignal.timeout(10000) }
+      { signal: AbortSignal.timeout(15000) }
     );
     if (res.ok) {
       const data = await res.json();
-      videoIdCache.set(id, data.videoId ?? null);
+      videoIdCache.set(id, { id: data.videoId ?? null, ts: Date.now() });
       return data.videoId ?? null;
     }
   } catch { /* ignore */ }
-  videoIdCache.set(id, null);
+  videoIdCache.set(id, { id: null, ts: Date.now() });
   return null;
 }
 
@@ -384,9 +391,9 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     fetchYouTubeId(currentSong.artistName, currentSong.trackName, currentSong.id)
       .then(id => {
         dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: id ? "ready" : "error" } });
-        // If no video ID found, auto-skip to next song after a short delay
+        // If no video ID found, auto-skip to next song
         if (!id) {
-          setTimeout(() => dispatch({ type: "NEXT" }), 1500);
+          setTimeout(() => dispatch({ type: "NEXT" }), 2000);
         }
       });
     // Save to Firestore so other devices know what's playing
