@@ -73,15 +73,18 @@ export function dedupeAlbums<T extends { collectionId: string; collectionName?: 
 
 export function getArtwork(url: string, size = 300): string {
   if (!url || url.trim() === "") {
-    // Deterministic placeholder based on size
-    return `https://via.placeholder.com/${size}/${size}/1a1a2e/ffffff?text=Music`;
+    // Dark music note SVG as data URI — instant, no network request
+    return `data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='${size}' height='${size}' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' fill='%231a1a2e'/%3E%3Cpath d='M40 30v28a8 8 0 1 0 6 0V38l18-5v22a8 8 0 1 0 6 0V26z' fill='%23ffffff20'/%3E%3C/svg%3E`;
   }
-  // iTunes URL pattern
-  if (url.includes("100x100bb")) return url.replace("100x100bb", `${size}x${size}bb`);
-  if (url.includes("100x100")) return url.replace("100x100", `${size}x${size}`);
-  // Spotify CDN — already full size, just return
+  // iTunes URL pattern — replace any size
+  const itunesMatch = url.match(/(\d+x\d+bb)/);
+  if (itunesMatch) return url.replace(itunesMatch[1], `${size}x${size}bb`);
+  if (url.includes("100x100")) return url.replace(/100x100/g, `${size}x${size}`);
+  // Spotify CDN — already full size, return as-is
   if (url.includes("i.scdn.co") || url.includes("mosaic.scdn.co")) return url;
-  // MusicBrainz cover art — use 500px for better quality
-  if (url.includes("coverartarchive.org")) return url.replace("front-250", "front-500");
+  // MusicBrainz cover art archive
+  if (url.includes("coverartarchive.org")) {
+    return url.replace(/front-\d+/, `front-${size >= 400 ? 1200 : 500}`);
+  }
   return url;
 }

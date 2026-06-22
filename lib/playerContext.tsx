@@ -395,11 +395,18 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     }
   }, [currentSong?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch lyrics when song changes
+  // Fetch lyrics when song changes — pass duration for better matching
   useEffect(() => {
     if (!currentSong) return;
     dispatch({ type: "SET_LYRICS_LOADING", payload: true });
-    fetch(`/api/lyrics?artist=${encodeURIComponent(currentSong.artistName)}&title=${encodeURIComponent(currentSong.trackName)}`)
+    const params = new URLSearchParams({
+      artist: currentSong.artistName,
+      title:  currentSong.trackName,
+    });
+    if (currentSong.trackTimeMillis) {
+      params.set("duration", String(currentSong.trackTimeMillis));
+    }
+    fetch(`/api/lyrics?${params.toString()}`)
       .then(r => r.json())
       .then(data => {
         const synced = data.synced ? parseLRC(data.synced) : [];
@@ -407,6 +414,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => dispatch({ type: "SET_LYRICS", payload: { synced: [], plain: null } }));
   }, [currentSong?.id]);
+
+  // Preload artwork for next 3 upcoming songs (reduces blank cover flash)
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const upcoming = state.queue.slice(state.currentIndex + 1, state.currentIndex + 4);
+    upcoming.forEach(song => {
+      if (!song.artworkUrl100) return;
+      const sizes = [300, 600];
+      sizes.forEach(size => {
+        const url = song.artworkUrl100
+          .replace("100x100bb", `${size}x${size}bb`)
+          .replace("100x100", `${size}x${size}`);
+        if (url) {
+          const img = new window.Image();
+          img.src = url;
+        }
+      });
+    });
+  }, [state.currentIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sync active lyric line using real currentTime
   // Use a 0.3s look-ahead so lyrics highlight just before the line is spoken (Spotify-style)

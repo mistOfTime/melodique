@@ -131,7 +131,13 @@ export default function SongRow({ song, index, queue, showAlbum = false, showArt
         {showArtwork && (
           <div className="hidden sm:block w-9 h-9 rounded-md overflow-hidden flex-shrink-0 bg-white/10">
             {song.artworkUrl100 && (
-              <Image src={getArtwork(song.artworkUrl100, 80)} alt={song.trackName} width={36} height={36} className="w-full h-full object-cover" />
+              <Image
+                src={getArtwork(song.artworkUrl100, 80)}
+                alt={song.trackName}
+                width={36} height={36}
+                className="w-full h-full object-cover"
+                onError={(e) => { (e.target as HTMLImageElement).style.display = "none"; }}
+              />
             )}
           </div>
         )}

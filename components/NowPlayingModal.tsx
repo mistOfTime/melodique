@@ -322,7 +322,10 @@ export default function NowPlayingModal({ onClose }: { onClose: () => void }) {
             ) : (
               <div className="flex flex-col items-center py-20 text-white/30">
                 <Music2 size={32} className="mb-3 opacity-20" />
-                <p className="text-sm">No lyrics found</p>
+                <p className="text-sm font-semibold text-white/40">Lyrics unavailable</p>
+                <p className="text-xs text-white/20 text-center mt-1.5 px-8 leading-relaxed">
+                  Lyrics for this song are not available yet.
+                </p>
               </div>
             )}
 

@@ -146,7 +146,23 @@ export async function GET(req: NextRequest) {
   // Filter MusicBrainz to only include tracks with artwork (slow CAA URLs cause blank covers)
   const mbWithArt = mbTracks.filter(t => t.artworkUrl100 && t.artworkUrl100.length > 10);
 
-  // Spotify first — best metadata + artwork. iTunes fills gaps. MusicBrainz last.
-  const combined = dedupe([...spotifyTracks, ...itunesTracks, ...mbWithArt]).slice(0, limit);
+  // Merge: Spotify first (best artwork), iTunes second (has genre), MusicBrainz last
+  // For Spotify tracks missing genre, try to fill from matching iTunes result
+  const itunesGenreMap = new Map<string, string>();
+  itunesTracks.forEach(t => {
+    if (t.primaryGenreName) {
+      const key = `${t.artistName.toLowerCase().trim()}::${t.trackName.toLowerCase().trim()}`;
+      itunesGenreMap.set(key, t.primaryGenreName);
+    }
+  });
+
+  const spotifyWithGenre = spotifyTracks.map(t => {
+    if (t.primaryGenreName) return t;
+    const key = `${t.artistName.toLowerCase().trim()}::${t.trackName.toLowerCase().trim()}`;
+    const genre = itunesGenreMap.get(key);
+    return genre ? { ...t, primaryGenreName: genre } : t;
+  });
+
+  const combined = dedupe([...spotifyWithGenre, ...itunesTracks, ...mbWithArt]).slice(0, limit);
   return NextResponse.json({ results: combined, resultCount: combined.length });
 }

@@ -214,11 +214,11 @@ export default function NowPlayingPanel() {
             </p>
           </div>
         ) : (
-          <div className="flex flex-col items-center py-12 text-white/30">
-            <Music2 size={22} className="mb-2 opacity-20" />
-            <p className="text-xs text-center">No lyrics found</p>
-            <p className="text-[10px] text-white/20 text-center mt-1 px-4">
-              Try searching for the song on lrclib.net
+          <div className="flex flex-col items-center py-12 text-white/30 px-4">
+            <Music2 size={28} className="mb-3 opacity-20" />
+            <p className="text-sm font-semibold text-center text-white/40">Lyrics unavailable</p>
+            <p className="text-xs text-white/20 text-center mt-1.5 leading-relaxed">
+              Lyrics for this song are not available in our database yet.
             </p>
           </div>
         )}
