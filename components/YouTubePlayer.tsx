@@ -199,8 +199,8 @@ export default function YouTubePlayer() {
         onError: () => {
           if (modeRef.current !== "iframe") return;
           dispatch({ type: "SET_YT_STATUS", payload: "error" });
-          dispatch({ type: "SET_PLAYING", payload: false });
-          setTimeout(() => nextRef.current(), 1200);
+          // Auto-skip — use activeVideoId ref to avoid stale closures
+          setTimeout(() => nextRef.current(), 800);
         },
       },
     });

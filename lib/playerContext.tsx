@@ -382,7 +382,13 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     recordPlay(currentSong, state.currentIndex < state.queue.length - 20);
     dispatch({ type: "SET_YT_STATUS", payload: "loading" });
     fetchYouTubeId(currentSong.artistName, currentSong.trackName, currentSong.id)
-      .then(id => dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: id ? "ready" : "error" } }));
+      .then(id => {
+        dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: id ? "ready" : "error" } });
+        // If no video ID found, auto-skip to next song after a short delay
+        if (!id) {
+          setTimeout(() => dispatch({ type: "NEXT" }), 1500);
+        }
+      });
     // Save to Firestore so other devices know what's playing
     const uid = auth.currentUser?.uid;
     if (uid) {

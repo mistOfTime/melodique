@@ -70,12 +70,24 @@ function localSave(s: PlaylistState) {
 }
 
 function mergeState(base: PlaylistState, remote: Partial<PlaylistState>): PlaylistState {
-  return {
-    playlists:       remote.playlists       ?? base.playlists,
-    likedTracks:     remote.likedTracks     ?? base.likedTracks,
-    followedArtists: remote.followedArtists ?? base.followedArtists,
-    savedAlbums:     remote.savedAlbums     ?? base.savedAlbums,
-  };
+  // Never replace with an empty array — always keep the larger/merged set
+  const likedTracks = (remote.likedTracks && remote.likedTracks.length > 0)
+    ? mergeArrays(remote.likedTracks, base.likedTracks, "id")
+    : base.likedTracks;
+
+  const followedArtists = (remote.followedArtists && remote.followedArtists.length > 0)
+    ? mergeArrays(remote.followedArtists, base.followedArtists, "id")
+    : base.followedArtists;
+
+  const savedAlbums = (remote.savedAlbums && remote.savedAlbums.length > 0)
+    ? mergeArrays(remote.savedAlbums, base.savedAlbums, "id")
+    : base.savedAlbums;
+
+  const playlists = remote.playlists
+    ? mergePlaylists(remote.playlists, base.playlists)
+    : base.playlists;
+
+  return { playlists, likedTracks, followedArtists, savedAlbums };
 }
 
 // Merge two arrays, deduplicating by a key field
@@ -122,13 +134,7 @@ function mergePlaylists(remote: Playlist[] = [], local: Playlist[] = []): Playli
 function reducer(state: PlaylistState, action: Action): PlaylistState {
   switch (action.type) {
     case "HYDRATE":
-      return mergeState(state, {
-        ...action.payload,
-        // Always clear liked playlist cover so mosaic renders correctly
-        playlists: action.payload.playlists?.map((p: Playlist) =>
-          p.id === "liked" ? { ...p, cover: "" } : p
-        ),
-      });
+      return mergeState(state, action.payload);
 
     case "CREATE_PLAYLIST":
       return { ...state, playlists: [...state.playlists, {
@@ -265,8 +271,8 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
         hydrated.current = true;
         // Subscribe to real-time changes from other devices
         unsubFirestore.current = subscribeLibrary(fb.uid, (data) => {
-          // Don't overwrite if a local change happened in the last 6 seconds
-          if (Date.now() - localChangeTs.current < 6000) return;
+          // Don't overwrite if a local change happened in the last 10 seconds
+          if (Date.now() - localChangeTs.current < 10000) return;
           dispatch({ type: "HYDRATE", payload: data });
         });
       } else {
