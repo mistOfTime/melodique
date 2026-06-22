@@ -143,7 +143,10 @@ export async function GET(req: NextRequest) {
     searchMusicBrainz(term, Math.min(limit, 25)),
   ]);
 
-  // Spotify first — best metadata + artwork. iTunes fills gaps. MusicBrainz for underground.
-  const combined = dedupe([...spotifyTracks, ...itunesTracks, ...mbTracks]).slice(0, limit);
+  // Filter MusicBrainz to only include tracks with artwork (slow CAA URLs cause blank covers)
+  const mbWithArt = mbTracks.filter(t => t.artworkUrl100 && t.artworkUrl100.length > 10);
+
+  // Spotify first — best metadata + artwork. iTunes fills gaps. MusicBrainz last.
+  const combined = dedupe([...spotifyTracks, ...itunesTracks, ...mbWithArt]).slice(0, limit);
   return NextResponse.json({ results: combined, resultCount: combined.length });
 }

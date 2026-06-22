@@ -215,6 +215,7 @@ export default function YouTubePlayer() {
 
     // Mark this as the active video
     activeVideoId.current = videoId;
+    watchdogFired.current = false;
 
     lastProgressSet.current = 0;
     dispatch({ type: "SET_PROGRESS", payload: 0 });
@@ -332,6 +333,32 @@ export default function YouTubePlayer() {
     }, 500);
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state.isPlaying, dispatch]);
+
+  /* ── Progress watchdog — fires next() when song ends even with screen off ── */
+  /* The 'ended' event can be suppressed when the screen is locked on some devices.
+     This polls progress and auto-advances when >= 99% to guarantee auto-next. */
+  const watchdogRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const watchdogFired = useRef(false);
+
+  useEffect(() => {
+    if (watchdogRef.current) clearInterval(watchdogRef.current);
+    watchdogFired.current = false;
+    if (!state.isPlaying || !state.duration) return;
+
+    watchdogRef.current = setInterval(() => {
+      if (!isPlayingRef.current || watchdogFired.current) return;
+      const progress = state.progress;
+      const duration = state.duration;
+      if (duration > 0 && progress >= 0.99) {
+        watchdogFired.current = true;
+        clearInterval(watchdogRef.current!);
+        dispatch({ type: "SET_PLAYING", payload: false });
+        setTimeout(() => nextRef.current(), 300);
+      }
+    }, 1000);
+
+    return () => { if (watchdogRef.current) clearInterval(watchdogRef.current); };
+  }, [state.isPlaying, state.duration, state.progress, dispatch]);
 
   /* ── Visibility resume ── */
   useEffect(() => {

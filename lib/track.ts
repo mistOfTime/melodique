@@ -72,8 +72,16 @@ export function dedupeAlbums<T extends { collectionId: string; collectionName?: 
 }
 
 export function getArtwork(url: string, size = 300): string {
-  if (!url) return `https://picsum.photos/seed/default/300/300`;
+  if (!url || url.trim() === "") {
+    // Deterministic placeholder based on size
+    return `https://via.placeholder.com/${size}/${size}/1a1a2e/ffffff?text=Music`;
+  }
+  // iTunes URL pattern
   if (url.includes("100x100bb")) return url.replace("100x100bb", `${size}x${size}bb`);
   if (url.includes("100x100")) return url.replace("100x100", `${size}x${size}`);
+  // Spotify CDN — already full size, just return
+  if (url.includes("i.scdn.co") || url.includes("mosaic.scdn.co")) return url;
+  // MusicBrainz cover art — use 500px for better quality
+  if (url.includes("coverartarchive.org")) return url.replace("front-250", "front-500");
   return url;
 }

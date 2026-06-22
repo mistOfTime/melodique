@@ -434,100 +434,93 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
     const artist = currentSong.artistName ?? "";
     const lang   = /[\u3040-\u30FF\u4E00-\u9FFF\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
 
-    // Build a strict genre-based query using popular known artists in that genre
+    // Popular artist + era queries per genre — 2000s to 2026
     const GENRE_POPULAR: Record<string, string[]> = {
-      // Metal / Rock variants — these MUST stay metal
-      "Metal":           ["Metallica popular", "Slayer Pantera", "Iron Maiden popular", "Black Sabbath hits"],
-      "Nu-Metal":        ["Linkin Park popular", "Korn popular", "System of a Down hits", "Papa Roach Slipknot"],
-      "Hard Rock":       ["AC DC popular", "Guns N Roses hits", "Aerosmith popular", "Led Zeppelin best"],
-      "Alternative":     ["Nirvana popular", "Pearl Jam hits", "Soundgarden Alice in Chains", "Foo Fighters best"],
-      "Indie Rock":      ["Arctic Monkeys popular", "The Strokes hits", "Tame Impala best", "Radiohead popular"],
-      "Rock":            ["classic rock popular hits", "rock legends best songs", "rock anthems"],
-      "Metalcore":       ["Bring Me The Horizon popular", "Asking Alexandria hits", "A Day To Remember"],
-      "Screamo":         ["post-hardcore popular", "Underoath popular", "Thursday Saosin"],
-      "Emo":             ["My Chemical Romance popular", "Fall Out Boy hits", "Panic at the Disco"],
-      "Punk":            ["Green Day popular", "Blink-182 hits", "Sum 41 popular"],
+      "Metal":        ["Metallica Master of Puppets", "Slayer Raining Blood", "Iron Maiden Run to the Hills", "Pantera Walk", "Black Sabbath Paranoid", "Lamb of God popular", "Megadeth Symphony of Destruction"],
+      "Nu-Metal":     ["Linkin Park In the End", "Korn Freak on a Leash", "System of a Down Chop Suey", "Slipknot Duality", "Papa Roach Last Resort", "Limp Bizkit Nookie", "Disturbed Down with the Sickness"],
+      "Hard Rock":    ["AC DC Back in Black", "Guns N Roses Welcome to the Jungle", "Aerosmith Dream On", "Led Zeppelin Stairway to Heaven", "Bon Jovi Livin on a Prayer", "Queen Bohemian Rhapsody", "Van Halen Jump"],
+      "Alternative":  ["Nirvana Smells Like Teen Spirit", "Foo Fighters Best of You", "Pearl Jam Alive", "Soundgarden Black Hole Sun", "Alice in Chains Rooster", "Red Hot Chili Peppers Californication", "Stone Temple Pilots Plush"],
+      "Indie Rock":   ["Arctic Monkeys Do I Wanna Know", "The Strokes Last Nite", "Tame Impala The Less I Know the Better", "Radiohead Creep", "The 1975 Somebody Else", "Vampire Weekend A Punk", "Interpol Obstacle 1"],
+      "Rock":         ["Green Day Boulevard of Broken Dreams", "The Killers Mr Brightside", "Coldplay The Scientist", "U2 With or Without You", "Muse Supermassive Black Hole", "Oasis Wonderwall", "Beck Loser"],
+      "Metalcore":    ["Bring Me The Horizon Throne", "Asking Alexandria The Final Episode", "A Day To Remember Homesick", "Of Mice and Men popular", "Parkway Drive Carrion", "August Burns Red popular"],
+      "Emo":          ["My Chemical Romance Welcome to the Black Parade", "Fall Out Boy Sugar We're Goin Down", "Panic at the Disco I Write Sins Not Tragedies", "Dashboard Confessional Vindicated", "Taking Back Sunday MakeDamnSure"],
+      "Punk":         ["Green Day American Idiot", "Blink-182 All the Small Things", "Sum 41 Fat Lip", "The Offspring Come Out and Play", "Bad Religion popular", "NOFX popular"],
+      "Pop Punk":     ["Paramore Misery Business", "New Found Glory popular", "Simple Plan Perfect", "Good Charlotte The Anthem", "All Time Low Dear Maria Count Me In"],
 
-      // Hip-Hop
-      "Hip-Hop/Rap":     ["Drake popular hits", "Kendrick Lamar best", "J Cole popular", "Travis Scott hits"],
-      "Hip-Hop":         ["hip hop popular 2025", "rap hits classic", "Kanye West popular"],
-      "Rap":             ["rap popular songs", "trap hits 2025", "Future Lil Baby popular"],
-      "Drill":           ["UK drill popular", "Pop Smoke hits", "drill 2025 popular"],
+      "Hip-Hop/Rap":  ["Drake God's Plan", "Kendrick Lamar HUMBLE", "J Cole No Role Modelz", "Travis Scott Sicko Mode", "Post Malone Rockstar", "Cardi B WAP", "Nicki Minaj Super Bass", "Kanye West Gold Digger"],
+      "Hip-Hop":      ["Eminem Lose Yourself", "Jay Z Empire State of Mind", "Lil Wayne A Milli", "50 Cent In Da Club", "Snoop Dogg Drop It Like It's Hot", "Outkast Hey Ya", "Missy Elliott Get Ur Freak On"],
+      "Rap":          ["21 Savage Rockstar", "Future Mask Off", "Lil Uzi Vert XO Tour Llif3", "Roddy Ricch The Box", "Gunna Drip Too Hard", "Young Thug Wyclef Jean", "Playboi Carti Magnolia"],
+      "Trap":         ["Migos Bad and Boujee", "Gucci Mane popular", "Chief Keef I Don't Like", "Fetty Wap Trap Queen", "2 Chainz No Lie", "Rae Sremmurd No Flex Zone"],
 
-      // R&B / Soul
-      "R&B/Soul":        ["The Weeknd popular", "SZA hits", "Frank Ocean best", "H.E.R. popular"],
-      "R&B":             ["rnb popular 2025", "soul classics hits"],
+      "R&B/Soul":     ["The Weeknd Blinding Lights", "SZA Good Days", "Frank Ocean Thinkin Bout You", "Beyoncé Crazy in Love", "Usher Yeah", "Alicia Keys No One", "John Legend All of Me", "Bruno Mars Just the Way You Are"],
+      "R&B":          ["H.E.R. Focus", "Giveon Heartbreak Anniversary", "Daniel Caesar Best Part", "Summer Walker Over It", "Khalid Young Dumb Broke", "Brent Faiyaz Crew"],
+      "Soul":         ["Amy Winehouse Rehab", "Adele Rolling in the Deep", "Sam Cooke A Change Is Gonna Come", "Marvin Gaye Sexual Healing", "Al Green Let's Stay Together"],
 
-      // Pop
-      "Pop":             ["Taylor Swift popular", "Dua Lipa hits", "Ariana Grande best", "Ed Sheeran popular"],
-      "Indie Pop":       ["Billie Eilish popular", "Olivia Rodrigo hits", "Gracie Abrams"],
-      "Dance Pop":       ["Doja Cat popular", "Sabrina Carpenter hits", "Charli XCX"],
+      "Pop":          ["Taylor Swift Shake It Off", "Dua Lipa Levitating", "Ariana Grande thank u next", "Ed Sheeran Shape of You", "Harry Styles As It Was", "Billie Eilish Bad Guy", "Olivia Rodrigo drivers license", "Sabrina Carpenter Espresso"],
+      "Indie Pop":    ["Clairo Pretty Girl", "Rex Orange County Loving Is Easy", "Still Woozy Goodie Bag", "Phoebe Bridgers Motion Sickness", "Maggie Rogers Alaska"],
+      "Dance Pop":    ["Doja Cat Say So", "Charli XCX Boom Clap", "Bebe Rexha Meant to Be", "Lizzo Truth Hurts", "Meghan Trainor All About That Bass"],
+      "Teen Pop":     ["One Direction What Makes You Beautiful", "Justin Bieber Baby", "Miley Cyrus Wrecking Ball", "Selena Gomez Come and Get It"],
 
-      // Electronic
-      "Electronic":      ["Daft Punk popular", "Calvin Harris hits", "Martin Garrix best", "The Chainsmokers"],
-      "Dance":           ["EDM popular 2025", "house music hits", "electronic dance popular"],
-      "Lo-Fi":           ["lofi hip hop popular", "chill beats study", "lofi girl"],
+      "Electronic":   ["Daft Punk Get Lucky", "Calvin Harris Summer", "Martin Garrix Animals", "Avicii Wake Me Up", "Zedd Clarity", "Flume Holdin On", "Odesza A Moment Apart"],
+      "Dance":        ["The Chainsmokers Closer", "David Guetta Titanium", "Kygo Firestone", "Clean Bandit Rather Be", "Marshmello Happier", "Major Lazer Lean On"],
+      "House":        ["Fisher Losing It", "Chris Lake popular", "Eric Prydz Call On Me", "Disclosure Latch", "Duke Dumont I Got U"],
+      "EDM":          ["Skrillex Bangarang", "Deadmau5 Ghosts n Stuff", "Porter Robinson Language", "Bassnectar Lights popular", "Excision popular"],
+      "Lo-Fi":        ["lofi hip hop study beats popular", "Nujabes Feather", "J Dilla Donuts", "Tycho Awake", "Bonobo Kiara"],
 
-      // K-Pop / J-Pop
-      "K-Pop":           ["BTS popular hits", "BLACKPINK best", "NewJeans popular", "aespa hits"],
-      "J-Pop":           ["Yoasobi popular", "Official Hige Dandism", "Ado popular", "Fujii Kaze"],
-      "J-Rock":          ["ONE OK ROCK popular", "Radwimps hits", "My First Story"],
-      "Anime":           ["anime ost popular", "Your Lie in April ost", "attack on titan ost"],
+      "K-Pop":        ["BTS Dynamite", "BLACKPINK How You Like That", "NewJeans Hype Boy", "aespa Savage", "IVE Love Dive", "TWICE Cheer Up", "EXO Call Me Baby", "Stray Kids Miroh"],
+      "J-Pop":        ["Yoasobi Idol", "Official Hige Dandism Subtitle", "Ado Usseewa", "Fujii Kaze Shinunoga E-Wa", "King Gnu Hakujitsu", "Eve Heart wa Kaerarenai", "Kenshi Yonezu Lemon"],
+      "J-Rock":       ["ONE OK ROCK Wherever You Are", "Radwimps Nandemonaiya", "My First Story popular", "SiM The Answer", "Maximum the Hormone popular"],
+      "Anime":        ["LiSA Gurenge Demon Slayer", "Aimer Zankyou Reference Attack on Titan", "Asian Kung Fu Generation Rewrite", "Hiroyuki Sawano popular anime ost", "Yoko Kanno popular"],
+      "City Pop":     ["Mariya Takeuchi Plastic Love", "Tatsuro Yamashita Ride on Time", "Anri I Can't Stop the Loneliness", "Miki Matsubara Stay With Me"],
 
-      // Other
-      "Latin":           ["Bad Bunny popular", "J Balvin hits", "Ozuna Rauw Alejandro", "reggaeton 2025"],
-      "Classical":       ["beethoven symphony popular", "mozart best classical", "classical piano popular"],
-      "Jazz":            ["jazz standards popular", "Miles Davis best", "Coltrane popular"],
-      "Country":         ["Morgan Wallen popular", "Luke Combs hits", "Zach Bryan best"],
-      "Reggae":          ["Bob Marley popular", "reggae classics hits", "dancehall popular"],
+      "Latin":        ["Bad Bunny Dakiti", "J Balvin Ginza", "Ozuna Taki Taki", "Rauw Alejandro Todo De Ti", "Daddy Yankee Gasolina", "Shakira Hips Don't Lie", "Maluma Hawai"],
+      "Reggaeton":    ["Don Omar Danza Kuduro", "Nicky Jam El Perdon", "CNCO Reggaeton Lento", "Farruko Pepas"],
+      "Classical":    ["Beethoven Symphony No 5 popular", "Mozart Eine Kleine Nachtmusik", "Chopin Nocturne Op 9", "Bach Air on the G String", "Debussy Clair de Lune"],
+      "Jazz":         ["Miles Davis Kind of Blue", "John Coltrane A Love Supreme", "Dave Brubeck Take Five", "Thelonious Monk Round Midnight", "Norah Jones Come Away with Me"],
+      "Country":      ["Morgan Wallen Whiskey Glasses", "Luke Combs Beautiful Crazy", "Zach Bryan American Heartbreak", "Chris Stapleton Tennessee Whiskey", "Blake Shelton God's Country"],
+      "Reggae":       ["Bob Marley No Woman No Cry", "Sean Paul Temperature", "Damian Marley Road to Zion", "Protoje Who Knows"],
+      "Blues":        ["B.B. King The Thrill Is Gone", "Eric Clapton Layla", "Stevie Ray Vaughan Pride and Joy", "Robert Johnson Cross Road Blues"],
     };
 
     let queries: string[] = [];
 
-    // Japanese/Korean text detection — keep in that space
     if (lang) {
       const isKorean = /[\uAC00-\uD7A3]/.test(artist + currentSong.trackName);
-      if (isKorean) {
-        queries = GENRE_POPULAR["K-Pop"] ?? ["kpop popular hits"];
-      } else {
-        queries = GENRE_POPULAR["J-Pop"] ?? ["jpop popular hits"];
-      }
+      queries = isKorean ? GENRE_POPULAR["K-Pop"]! : GENRE_POPULAR["J-Pop"]!;
     } else {
-      // Find the best matching genre key
       const genreLower = genre.toLowerCase();
       const matchedKey = Object.keys(GENRE_POPULAR).find(k =>
         genreLower.includes(k.toLowerCase()) || k.toLowerCase().includes(genreLower)
       );
-
       if (matchedKey) {
-        queries = GENRE_POPULAR[matchedKey];
+        queries = GENRE_POPULAR[matchedKey]!;
       } else if (genre) {
-        // Unknown genre — use artist's genre directly
-        queries = [`${genre} popular songs`, `best ${genre} music`, `${artist} similar popular`];
+        queries = [`${genre} popular hits 2000s 2010s 2020s`, `best ${genre} songs popular`, `${artist} similar artists popular`];
       } else {
-        // No genre info — use artist similarity
-        queries = [`${artist} similar popular`, `popular music similar to ${artist}`];
+        queries = [`${artist} similar popular songs`, `popular music 2020s hits`];
       }
     }
 
+    // Pick a random query from the pool
     const query = queries[Math.floor(Math.random() * queries.length)];
     if (!query) return;
 
     radioFetching.current = true;
-    fetch(`/api/music/search?q=${encodeURIComponent(query)}&limit=25`)
+    fetch(`/api/music/search?q=${encodeURIComponent(query)}&limit=30`)
       .then(r => r.json())
       .then(data => {
         if (!data.results?.length) return;
         const incoming: Track[] = data.results.map(apiToTrack);
+        // Only add tracks that have artwork
+        const withArt = incoming.filter((s: Track) => s.artworkUrl100 && s.artworkUrl100.length > 10);
         const existingIds = new Set(state.queue.map((s: Track) => s.id));
-        const fresh = incoming.filter((s: Track) => !existingIds.has(s.id));
+        const fresh = withArt.filter((s: Track) => !existingIds.has(s.id));
         if (fresh.length > 0) {
-          // Shuffle the fresh tracks before adding so it's not always the same order
           const shuffled = [...fresh].sort(() => Math.random() - 0.5);
           shuffled.forEach((s: Track) => dispatch({ type: "ADD_TO_QUEUE", payload: s }));
         }
       })
-      .catch(() => { /* silent */ })
+      .catch(() => {})
       .finally(() => { radioFetching.current = false; });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [state.currentIndex, state.queue.length]);
