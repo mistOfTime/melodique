@@ -52,7 +52,7 @@ function safeCall<T>(player: YTPlayer | null, method: keyof YTPlayer, ...args: u
   } catch { return undefined; }
 }
 
-const CROSSFADE_MS = 400; // ms for fade out + fade in
+const CROSSFADE_MS = 400;
 
 export default function YouTubePlayer() {
   const { state, currentSong, next, dispatch } = usePlayer();
@@ -65,34 +65,60 @@ export default function YouTubePlayer() {
   const lastProgressSet = useRef(0);
   const prevProgress    = useRef(0);
   const prevVideoId     = useRef<string | null>(null);
-  const targetVolume    = useRef(state.volume); // actual user volume
+  const targetVolume    = useRef(state.volume);
+  // Keep a stable ref to next() so the onStateChange closure always calls the latest version
+  const nextRef         = useRef(next);
+  const isPlayingRef    = useRef(state.isPlaying);
 
-  // Keep targetVolume in sync with user's volume setting
+  useEffect(() => { nextRef.current = next; }, [next]);
+  useEffect(() => { isPlayingRef.current = state.isPlaying; }, [state.isPlaying]);
   useEffect(() => { targetVolume.current = state.volume; }, [state.volume]);
+
+  /* ── Keep playing when user presses Home / switches app ── */
+  useEffect(() => {
+    const onVisibilityChange = () => {
+      // When page becomes hidden (home button pressed), if we were playing, resume after a short delay
+      if (document.hidden) return;
+      // Page became visible again — if we should be playing, make sure it still is
+      if (isPlayingRef.current && ytRef.current) {
+        setTimeout(() => {
+          if (isPlayingRef.current) safeCall(ytRef.current, "playVideo");
+        }, 300);
+      }
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+  }, []);
+
+  /* ── Silent audio element to keep audio context alive on iOS/Android ── */
+  useEffect(() => {
+    // A silent looping audio element tricks the browser into keeping
+    // the audio session active when the screen is off or app is backgrounded
+    const audio = document.createElement("audio");
+    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
+    audio.loop = true;
+    audio.volume = 0.001; // nearly silent
+    audio.play().catch(() => {/* needs user gesture first, that's fine */});
+    return () => { audio.pause(); };
+  }, []);
 
   /* Crossfade: fade out → swap → fade in */
   const crossfadeTo = useCallback((videoId: string) => {
     if (fadeTimerRef.current) clearInterval(fadeTimerRef.current);
-
     const vol = targetVolume.current;
     let step = 0;
     const steps = 8;
     const intervalMs = CROSSFADE_MS / steps;
-
-    // Fade out
     fadeTimerRef.current = setInterval(() => {
       step++;
       const faded = vol * (1 - step / steps);
       safeCall(ytRef.current, "setVolume", Math.max(0, faded * 100));
       if (step >= steps) {
         clearInterval(fadeTimerRef.current!);
-        // Load new video at volume 0
         safeCall(ytRef.current, "setVolume", 0);
         safeCall(ytRef.current, "loadVideoById", videoId);
         pendingVideoId.current = null;
         dispatch({ type: "SET_YT_STATUS", payload: "ready" });
-
-        // Small delay then fade in
         setTimeout(() => {
           safeCall(ytRef.current, "playVideo");
           let s2 = 0;
@@ -112,7 +138,7 @@ export default function YouTubePlayer() {
 
   const loadVideo = useCallback((videoId: string, withFade = false) => {
     if (playerReady.current && ytRef.current) {
-      if (withFade && prevVideoId.current && state.isPlaying) {
+      if (withFade && prevVideoId.current && isPlayingRef.current) {
         crossfadeTo(videoId);
       } else {
         safeCall(ytRef.current, "loadVideoById", videoId);
@@ -122,13 +148,18 @@ export default function YouTubePlayer() {
       pendingVideoId.current = videoId;
     }
     prevVideoId.current = videoId;
-  }, [crossfadeTo, state.isPlaying]);
+  }, [crossfadeTo]);
 
   const initPlayer = useCallback(() => {
     if (!divRef.current || ytRef.current) return;
     ytRef.current = new window.YT.Player(divRef.current, {
       height: "1", width: "1",
-      playerVars: { autoplay: 0, controls: 0, disablekb: 1, fs: 0, modestbranding: 1, playsinline: 1, rel: 0 },
+      playerVars: {
+        autoplay: 0, controls: 0, disablekb: 1,
+        fs: 0, modestbranding: 1,
+        playsinline: 1, // essential for iOS background/inline play
+        rel: 0,
+      },
       events: {
         onReady: () => {
           playerReady.current = true;
@@ -148,13 +179,22 @@ export default function YouTubePlayer() {
             dispatch({ type: "SET_YT_STATUS", payload: "ready" });
           }
           if (e.data === S.ENDED) {
+            // Use ref so we always call the latest next() even from stale closure
             dispatch({ type: "SET_PLAYING", payload: false });
-            next();
+            setTimeout(() => nextRef.current(), 300);
+          }
+          if (e.data === S.PAUSED) {
+            // If the browser paused us (e.g. home button) but we should be playing, resume
+            if (isPlayingRef.current && !document.hidden) {
+              setTimeout(() => safeCall(ytRef.current, "playVideo"), 500);
+            }
           }
         },
         onError: () => {
           dispatch({ type: "SET_YT_STATUS", payload: "error" });
           dispatch({ type: "SET_PLAYING", payload: false });
+          // Auto-skip on error after a moment
+          setTimeout(() => nextRef.current(), 1500);
         },
       },
     });
@@ -182,7 +222,7 @@ export default function YouTubePlayer() {
     else safeCall(ytRef.current, "pauseVideo");
   }, [state.isPlaying, state.ytStatus]);
 
-  /* Volume (only update if no fade is running) */
+  /* Volume */
   useEffect(() => {
     targetVolume.current = state.volume;
     if (!fadeTimerRef.current) {
@@ -219,7 +259,7 @@ export default function YouTubePlayer() {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [state.isPlaying, dispatch]);
 
-  /* ── Media Session API — lock screen controls ───────── */
+  /* ── Media Session API — lock screen / notification controls ── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !currentSong) return;
 
@@ -234,9 +274,15 @@ export default function YouTubePlayer() {
       ],
     });
 
-    navigator.mediaSession.setActionHandler("play",          () => dispatch({ type: "SET_PLAYING", payload: true }));
-    navigator.mediaSession.setActionHandler("pause",         () => dispatch({ type: "SET_PLAYING", payload: false }));
-    navigator.mediaSession.setActionHandler("nexttrack",     () => dispatch({ type: "NEXT" }));
+    navigator.mediaSession.setActionHandler("play",          () => {
+      dispatch({ type: "SET_PLAYING", payload: true });
+      safeCall(ytRef.current, "playVideo");
+    });
+    navigator.mediaSession.setActionHandler("pause",         () => {
+      dispatch({ type: "SET_PLAYING", payload: false });
+      safeCall(ytRef.current, "pauseVideo");
+    });
+    navigator.mediaSession.setActionHandler("nexttrack",     () => nextRef.current());
     navigator.mediaSession.setActionHandler("previoustrack", () => dispatch({ type: "PREV" }));
     navigator.mediaSession.setActionHandler("seekto", (d) => {
       if (d.seekTime !== undefined && state.duration > 0) {
@@ -257,7 +303,7 @@ export default function YouTubePlayer() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentSong?.id, state.isPlaying, state.duration]);
 
-  /* ── Sync seek position to OS media controls ─────────── */
+  /* ── Sync seek position to OS media controls ── */
   useEffect(() => {
     if (!("mediaSession" in navigator) || !state.duration) return;
     try {
