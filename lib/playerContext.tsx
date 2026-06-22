@@ -447,14 +447,14 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       "Punk":         ["Green Day American Idiot", "Blink-182 All the Small Things", "Sum 41 Fat Lip", "The Offspring Come Out and Play", "Bad Religion popular", "NOFX popular"],
       "Pop Punk":     ["Paramore Misery Business", "New Found Glory popular", "Simple Plan Perfect", "Good Charlotte The Anthem", "All Time Low Dear Maria Count Me In"],
 
-      "Hip-Hop/Rap":  ["Drake God's Plan", "Kendrick Lamar HUMBLE", "J Cole No Role Modelz", "Travis Scott Sicko Mode", "Post Malone Rockstar", "Cardi B WAP", "Nicki Minaj Super Bass", "Kanye West Gold Digger"],
-      "Hip-Hop":      ["Eminem Lose Yourself", "Jay Z Empire State of Mind", "Lil Wayne A Milli", "50 Cent In Da Club", "Snoop Dogg Drop It Like It's Hot", "Outkast Hey Ya", "Missy Elliott Get Ur Freak On"],
+      "Hip-Hop/Rap":  ["Drake God's Plan", "Kendrick Lamar HUMBLE", "J Cole No Role Modelz", "Travis Scott Sicko Mode", "Post Malone Rockstar", "Cardi B WAP", "Nicki Minaj Super Bass", "Kanye West Gold Digger", "Jay-Z 99 Problems", "Lil Wayne How to Love", "Wiz Khalifa Work Hard Play Hard", "Meek Mill Dreams and Nightmares"],
+      "Hip-Hop":      ["Eminem Lose Yourself", "Jay Z Empire State of Mind", "Lil Wayne A Milli", "50 Cent In Da Club", "Snoop Dogg Beautiful", "Outkast Hey Ya", "Missy Elliott Work It", "Ludacris Stand Up", "T.I. Whatever You Like", "Fabolous Make Me Better", "Rick Ross Stay Schemin", "Big Sean Blessings"],
       "Rap":          ["21 Savage Rockstar", "Future Mask Off", "Lil Uzi Vert XO Tour Llif3", "Roddy Ricch The Box", "Gunna Drip Too Hard", "Young Thug Wyclef Jean", "Playboi Carti Magnolia"],
       "Trap":         ["Migos Bad and Boujee", "Gucci Mane popular", "Chief Keef I Don't Like", "Fetty Wap Trap Queen", "2 Chainz No Lie", "Rae Sremmurd No Flex Zone"],
 
-      "R&B/Soul":     ["The Weeknd Blinding Lights", "SZA Good Days", "Frank Ocean Thinkin Bout You", "Beyoncé Crazy in Love", "Usher Yeah", "Alicia Keys No One", "John Legend All of Me", "Bruno Mars Just the Way You Are"],
-      "R&B":          ["H.E.R. Focus", "Giveon Heartbreak Anniversary", "Daniel Caesar Best Part", "Summer Walker Over It", "Khalid Young Dumb Broke", "Brent Faiyaz Crew"],
-      "Soul":         ["Amy Winehouse Rehab", "Adele Rolling in the Deep", "Sam Cooke A Change Is Gonna Come", "Marvin Gaye Sexual Healing", "Al Green Let's Stay Together"],
+      "R&B/Soul":     ["Ne-Yo So Sick", "Mariah Carey We Belong Together", "Usher Yeah", "Beyonce Crazy in Love", "Alicia Keys No One", "John Legend All of Me", "Bruno Mars Treasure", "The Weeknd Earned It", "SZA Kill Bill", "Frank Ocean Thinkin Bout You", "Mary J Blige Real Love", "R Kelly Ignition", "Destiny's Child Say My Name"],
+      "R&B":          ["Ne-Yo Because of You", "Mariah Carey Obsessed", "Usher Confessions Part II", "Chris Brown No Guidance", "Trey Songz Mr Steal Your Girl", "Mario Let Me Love You", "Omarion Ice Box", "Ciara Goodies", "Fantasia When I See U", "Tank When We", "Ginuwine Pony", "Joe All That I Am", "Maxwell Fortunate"],
+      "Soul":         ["Amy Winehouse Back to Black", "Adele Rolling in the Deep", "Sam Cooke A Change Is Gonna Come", "Marvin Gaye Sexual Healing", "Al Green Lets Stay Together", "Stevie Wonder Superstition", "Aretha Franklin Respect", "Ray Charles Georgia on My Mind", "Otis Redding Try a Little Tenderness", "Bill Withers Lovely Day"],
 
       "Pop":          ["Taylor Swift Shake It Off", "Dua Lipa Levitating", "Ariana Grande thank u next", "Ed Sheeran Shape of You", "Harry Styles As It Was", "Billie Eilish Bad Guy", "Olivia Rodrigo drivers license", "Sabrina Carpenter Espresso"],
       "Indie Pop":    ["Clairo Pretty Girl", "Rex Orange County Loving Is Easy", "Still Woozy Goodie Bag", "Phoebe Bridgers Motion Sickness", "Maggie Rogers Alaska"],

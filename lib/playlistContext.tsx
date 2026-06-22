@@ -222,6 +222,8 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   const uidRef          = useRef<string | null>(null);
   const hydrated        = useRef(false);
   const unsubFirestore  = useRef<(() => void) | null>(null);
+  // Block remote hydration for 5s after any local change to prevent revert
+  const localChangeTs   = useRef(0);
 
   // 1. Hydrate from localStorage on mount
   useEffect(() => {
@@ -263,6 +265,8 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
         hydrated.current = true;
         // Subscribe to real-time changes from other devices
         unsubFirestore.current = subscribeLibrary(fb.uid, (data) => {
+          // Don't overwrite if a local change happened in the last 6 seconds
+          if (Date.now() - localChangeTs.current < 6000) return;
           dispatch({ type: "HYDRATE", payload: data });
         });
       } else {
@@ -277,6 +281,7 @@ export function PlaylistProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     localSave(state);
     if (uidRef.current && hydrated.current) {
+      localChangeTs.current = Date.now(); // mark local change time
       debouncedSave(uidRef.current, {
         playlists:       state.playlists,
         likedTracks:     state.likedTracks,
