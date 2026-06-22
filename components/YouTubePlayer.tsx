@@ -54,6 +54,35 @@ function safeCall<T>(player: YTPlayer | null, method: keyof YTPlayer, ...args: u
 
 const CROSSFADE_MS = 400;
 
+/* ── Silent audio keepalive ─────────────────────────────
+ * Uses AudioContext to create a real (but silent) looping buffer.
+ * Must be started from a user gesture — iOS/Android require this.
+ * This keeps the browser's audio session alive when the screen is off.
+ */
+let silentAudioCtx: AudioContext | null = null;
+
+function startSilentAudio() {
+  if (silentAudioCtx) return;
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const Ctx = (window.AudioContext || (window as any).webkitAudioContext) as typeof AudioContext;
+    silentAudioCtx = new Ctx();
+    const buf = silentAudioCtx.createBuffer(1, silentAudioCtx.sampleRate, silentAudioCtx.sampleRate);
+    const src = silentAudioCtx.createBufferSource();
+    src.buffer = buf;
+    src.loop = true;
+    const gain = silentAudioCtx.createGain();
+    gain.gain.value = 0.001;
+    src.connect(gain);
+    gain.connect(silentAudioCtx.destination);
+    src.start(0);
+  } catch { /* ignore */ }
+}
+
+function resumeSilentAudio() {
+  if (silentAudioCtx?.state === "suspended") silentAudioCtx.resume().catch(() => {});
+}
+
 export default function YouTubePlayer() {
   const { state, currentSong, next, dispatch } = usePlayer();
   const divRef          = useRef<HTMLDivElement>(null);
@@ -69,37 +98,45 @@ export default function YouTubePlayer() {
   // Keep a stable ref to next() so the onStateChange closure always calls the latest version
   const nextRef         = useRef(next);
   const isPlayingRef    = useRef(state.isPlaying);
+  // Tracks whether WE intentionally paused — prevents the S.PAUSED handler from fighting us
+  const intentionalPause = useRef(false);
 
   useEffect(() => { nextRef.current = next; }, [next]);
   useEffect(() => { isPlayingRef.current = state.isPlaying; }, [state.isPlaying]);
   useEffect(() => { targetVolume.current = state.volume; }, [state.volume]);
 
-  /* ── Keep playing when user presses Home / switches app ── */
+  /* ── Start silent audio on first user tap (required for iOS/Android) ── */
+  useEffect(() => {
+    const onFirstInteraction = () => {
+      startSilentAudio();
+      document.removeEventListener("touchstart", onFirstInteraction, true);
+      document.removeEventListener("click",      onFirstInteraction, true);
+    };
+    document.addEventListener("touchstart", onFirstInteraction, { capture: true, passive: true });
+    document.addEventListener("click",      onFirstInteraction, { capture: true, passive: true });
+    return () => {
+      document.removeEventListener("touchstart", onFirstInteraction, true);
+      document.removeEventListener("click",      onFirstInteraction, true);
+    };
+  }, []);
+
+  /* ── Resume when page becomes visible again (home button → back to app) ── */
   useEffect(() => {
     const onVisibilityChange = () => {
-      // When page becomes hidden (home button pressed), if we were playing, resume after a short delay
       if (document.hidden) return;
-      // Page became visible again — if we should be playing, make sure it still is
-      if (isPlayingRef.current && ytRef.current) {
-        setTimeout(() => {
-          if (isPlayingRef.current) safeCall(ytRef.current, "playVideo");
-        }, 300);
-      }
+      resumeSilentAudio();
+      if (!isPlayingRef.current || !ytRef.current) return;
+      setTimeout(() => {
+        if (!isPlayingRef.current || !ytRef.current) return;
+        const ps = safeCall<number>(ytRef.current, "getPlayerState");
+        // 1 = PLAYING, 3 = BUFFERING — if neither, force resume
+        if (ps !== 1 && ps !== 3) safeCall(ytRef.current, "playVideo");
+        // Re-sync volume (gets reset on some Android browsers)
+        safeCall(ytRef.current, "setVolume", targetVolume.current * 100);
+      }, 600);
     };
     document.addEventListener("visibilitychange", onVisibilityChange);
     return () => document.removeEventListener("visibilitychange", onVisibilityChange);
-  }, []);
-
-  /* ── Silent audio element to keep audio context alive on iOS/Android ── */
-  useEffect(() => {
-    // A silent looping audio element tricks the browser into keeping
-    // the audio session active when the screen is off or app is backgrounded
-    const audio = document.createElement("audio");
-    audio.src = "data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQAAAAA=";
-    audio.loop = true;
-    audio.volume = 0.001; // nearly silent
-    audio.play().catch(() => {/* needs user gesture first, that's fine */});
-    return () => { audio.pause(); };
   }, []);
 
   /* Crossfade: fade out → swap → fade in */
@@ -159,6 +196,7 @@ export default function YouTubePlayer() {
         fs: 0, modestbranding: 1,
         playsinline: 1, // essential for iOS background/inline play
         rel: 0,
+        origin: typeof window !== "undefined" ? window.location.origin : "",
       },
       events: {
         onReady: () => {
@@ -184,17 +222,22 @@ export default function YouTubePlayer() {
             setTimeout(() => nextRef.current(), 300);
           }
           if (e.data === S.PAUSED) {
-            // If the browser paused us (e.g. home button) but we should be playing, resume
-            if (isPlayingRef.current && !document.hidden) {
-              setTimeout(() => safeCall(ytRef.current, "playVideo"), 500);
+            // Only auto-resume if: we intend to be playing AND it wasn't us who paused
+            if (isPlayingRef.current && !intentionalPause.current && !document.hidden) {
+              setTimeout(() => {
+                if (isPlayingRef.current && !intentionalPause.current) {
+                  safeCall(ytRef.current, "playVideo");
+                }
+              }, 400);
             }
+            intentionalPause.current = false;
           }
         },
         onError: () => {
           dispatch({ type: "SET_YT_STATUS", payload: "error" });
           dispatch({ type: "SET_PLAYING", payload: false });
           // Auto-skip on error after a moment
-          setTimeout(() => nextRef.current(), 1500);
+          setTimeout(() => nextRef.current(), 1200);
         },
       },
     });
@@ -215,11 +258,16 @@ export default function YouTubePlayer() {
     }
   }, [state.ytVideoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  /* Play / pause */
+  /* Play / pause — mark intentional so S.PAUSED handler doesn't auto-resume */
   useEffect(() => {
     if (!ytRef.current || state.ytStatus !== "ready") return;
-    if (state.isPlaying) safeCall(ytRef.current, "playVideo");
-    else safeCall(ytRef.current, "pauseVideo");
+    if (state.isPlaying) {
+      intentionalPause.current = false;
+      safeCall(ytRef.current, "playVideo");
+    } else {
+      intentionalPause.current = true;
+      safeCall(ytRef.current, "pauseVideo");
+    }
   }, [state.isPlaying, state.ytStatus]);
 
   /* Volume */
@@ -274,11 +322,13 @@ export default function YouTubePlayer() {
       ],
     });
 
-    navigator.mediaSession.setActionHandler("play",          () => {
+    navigator.mediaSession.setActionHandler("play", () => {
+      intentionalPause.current = false;
       dispatch({ type: "SET_PLAYING", payload: true });
       safeCall(ytRef.current, "playVideo");
     });
-    navigator.mediaSession.setActionHandler("pause",         () => {
+    navigator.mediaSession.setActionHandler("pause", () => {
+      intentionalPause.current = true;
       dispatch({ type: "SET_PLAYING", payload: false });
       safeCall(ytRef.current, "pauseVideo");
     });
