@@ -11,8 +11,9 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 const SEARCH_HISTORY_KEY     = "melodique_search_history";
-const SEARCH_RECENT_SONGS_KEY = "melodique_search_recent_songs"; // separate from play history
+const SEARCH_RECENT_SONGS_KEY = "melodique_search_recent_songs";
 const MAX_HISTORY = 10;
+const MAX_RECENT_SONGS = 15;
 
 function getHistory(): string[] {
   try { return JSON.parse(localStorage.getItem(SEARCH_HISTORY_KEY) || "[]"); } catch { return []; }
@@ -33,7 +34,7 @@ function saveSearchRecentSong(track: Track) {
   try {
     const raw    = localStorage.getItem(SEARCH_RECENT_SONGS_KEY);
     const recent: Track[] = raw ? JSON.parse(raw) : [];
-    const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, 20);
+    const deduped = [track, ...recent.filter(t => t.id !== track.id)].slice(0, MAX_RECENT_SONGS);
     localStorage.setItem(SEARCH_RECENT_SONGS_KEY, JSON.stringify(deduped));
   } catch { /* ignore */ }
 }
@@ -42,6 +43,13 @@ function getSearchRecentSongs(): Track[] {
     const raw = localStorage.getItem(SEARCH_RECENT_SONGS_KEY);
     return raw ? JSON.parse(raw) : [];
   } catch { return []; }
+}
+function removeRecentSong(id: string) {
+  try {
+    const raw = localStorage.getItem(SEARCH_RECENT_SONGS_KEY);
+    const recent: Track[] = raw ? JSON.parse(raw) : [];
+    localStorage.setItem(SEARCH_RECENT_SONGS_KEY, JSON.stringify(recent.filter(t => t.id !== id)));
+  } catch { /* ignore */ }
 }
 
 const GENRES: { label: string; color: string; query: string }[] = [
@@ -339,48 +347,90 @@ export default function SearchPage() {
         )}
       </div>
 
-      {/* ── Recent searches ─────────────────────────────── */}
-      {!query && history.length > 0 && (
-        <div className="mb-6 max-w-2xl">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-base text-white">Recent searches</h2>
-            <button onClick={() => { localStorage.removeItem(SEARCH_HISTORY_KEY); setHistory([]); }}
-              className="text-xs text-white/40 hover:text-white transition-colors">Clear all</button>
+      {/* ── Recent searches (Spotify-style list) ──────────── */}
+      {!query && (recentSongs.length > 0 || history.length > 0) && (
+        <div className="mb-8 max-w-2xl">
+          <div className="flex items-center justify-between mb-4">
+            <h2 className="font-bold text-xl text-white">Recent searches</h2>
+            {(recentSongs.length > 0 || history.length > 0) && (
+              <button
+                onClick={() => {
+                  localStorage.removeItem(SEARCH_HISTORY_KEY);
+                  localStorage.removeItem(SEARCH_RECENT_SONGS_KEY);
+                  setHistory([]);
+                  setRecentSongs([]);
+                }}
+                className="text-sm font-semibold text-white/50 hover:text-white transition-colors"
+              >
+                Clear all
+              </button>
+            )}
           </div>
-          <div className="flex flex-wrap gap-2">
-            {history.map(term => (
-              <div key={term}
-                className="flex items-center gap-2 bg-white/[0.08] hover:bg-white/[0.12] rounded-full px-3 py-1.5 cursor-pointer transition-colors group"
-                onClick={() => { setQuery(term); doSearch(term); }}>
-                <Clock size={13} className="text-white/40 flex-shrink-0" />
-                <span className="text-sm text-white">{term}</span>
-                <button onClick={e => { e.stopPropagation(); removeFromHistory(term); setHistory(getHistory()); }}
-                  className="opacity-0 group-hover:opacity-100 text-white/40 hover:text-white transition-all">
-                  <X size={13} />
+
+          <div className="flex flex-col">
+            {/* Recent songs — shown first, Spotify list style */}
+            {recentSongs.map(t => (
+              <div
+                key={t.id}
+                className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/[0.07] transition-colors cursor-pointer group"
+                onClick={() => {
+                  saveSearchRecentSong(t);
+                  setRecentSongs(getSearchRecentSongs());
+                  playQueue([t], 0);
+                }}
+              >
+                {/* Album art */}
+                <div className="w-12 h-12 rounded-md overflow-hidden flex-shrink-0 bg-white/10">
+                  {t.artworkUrl100
+                    ? <Image src={getArtwork(t.artworkUrl100, 100)} alt={t.trackName} width={48} height={48} className="w-full h-full object-cover" />
+                    : <div className="w-full h-full flex items-center justify-center"><Music2 size={16} className="text-white/20" /></div>}
+                </div>
+
+                {/* Info */}
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{t.trackName}</p>
+                  <p className="text-xs text-white/50 truncate mt-0.5">Song · {t.artistName}</p>
+                </div>
+
+                {/* Remove button — visible on hover */}
+                <button
+                  onClick={e => {
+                    e.stopPropagation();
+                    removeRecentSong(t.id);
+                    setRecentSongs(getSearchRecentSongs());
+                  }}
+                  className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/50 hover:text-white transition-all flex-shrink-0"
+                  title="Remove"
+                >
+                  <X size={14} />
                 </button>
               </div>
             ))}
-          </div>
-        </div>
-      )}
 
-      {/* ── Recently played songs ────────────────────────── */}
-      {!query && recentSongs.length > 0 && (
-        <div className="mb-6">
-          <div className="flex items-center justify-between mb-3">
-            <h2 className="font-bold text-base text-white">Recently played</h2>
-          </div>
-          <div className="flex gap-3 overflow-x-auto pb-2 hide-scrollbar">
-            {recentSongs.map(t => (
-              <div key={t.id}
-                className="flex-shrink-0 flex flex-col items-center gap-1.5 cursor-pointer group w-20"
-                onClick={() => { playQueue([t], 0); }}>
-                <div className="w-16 h-16 rounded-xl overflow-hidden bg-white/10 flex-shrink-0 group-hover:scale-105 transition-transform">
-                  {t.artworkUrl100
-                    ? <Image src={getArtwork(t.artworkUrl100, 100)} alt={t.trackName} width={64} height={64} className="w-full h-full object-cover" />
-                    : <div className="w-full h-full flex items-center justify-center"><Music2 size={18} className="text-white/20" /></div>}
+            {/* Recent query terms — shown below songs */}
+            {history.map(term => (
+              <div
+                key={term}
+                className="flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-white/[0.07] transition-colors cursor-pointer group"
+                onClick={() => { setQuery(term); doSearch(term); }}
+              >
+                {/* Clock icon in a pill */}
+                <div className="w-12 h-12 rounded-md flex-shrink-0 bg-white/[0.07] flex items-center justify-center">
+                  <Clock size={18} className="text-white/50" />
                 </div>
-                <p className="text-[10px] text-white/70 truncate w-full text-center">{t.trackName}</p>
+
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm font-semibold text-white truncate">{term}</p>
+                  <p className="text-xs text-white/40 mt-0.5">Search</p>
+                </div>
+
+                <button
+                  onClick={e => { e.stopPropagation(); removeFromHistory(term); setHistory(getHistory()); }}
+                  className="opacity-0 group-hover:opacity-100 w-8 h-8 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center text-white/50 hover:text-white transition-all flex-shrink-0"
+                  title="Remove"
+                >
+                  <X size={14} />
+                </button>
               </div>
             ))}
           </div>
@@ -434,7 +484,7 @@ export default function SearchPage() {
               <section>
                 <h2 className="font-bold text-lg text-white mb-3">Top result</h2>
                 <div className="bg-white/[0.05] hover:bg-white/[0.08] rounded-xl p-5 cursor-pointer transition-colors w-full sm:w-64 group relative"
-                  onClick={() => { saveSearchRecentSong(tracks[0]); playQueue(tracks, 0); }}>
+                  onClick={() => { saveSearchRecentSong(tracks[0]); setRecentSongs(getSearchRecentSongs()); playQueue(tracks, 0); }}>
                   {tracks[0].artworkUrl100
                     ? <Image src={getArtwork(tracks[0].artworkUrl100, 200)} alt={tracks[0].trackName} width={80} height={80} className="rounded-lg mb-4 shadow-lg object-cover" />
                     : <div className="w-20 h-20 rounded-lg bg-white/10 mb-4 flex items-center justify-center"><Music2 size={24} className="text-white/20" /></div>}
@@ -493,7 +543,9 @@ export default function SearchPage() {
                 <h2 className="font-bold text-lg text-white mb-3">Songs ({tracks.length})</h2>
                 <div className="rounded-xl overflow-hidden">
                   {tracks.map((t, i) => (
-                    <SongRow key={t.id} song={t} index={i} queue={tracks} showAlbum showArtwork />
+                    <div key={t.id} onClick={() => { saveSearchRecentSong(t); setRecentSongs(getSearchRecentSongs()); }}>
+                      <SongRow song={t} index={i} queue={tracks} showAlbum showArtwork />
+                    </div>
                   ))}
                 </div>
               </section>
