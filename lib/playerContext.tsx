@@ -273,29 +273,42 @@ function parseLRC(lrc: string): LyricLine[] {
   return lines.filter((l, i) => i === 0 || l.time !== lines[i - 1].time);
 }
 
-// Cache video IDs — null results expire after 3 minutes so we retry
+// Cache video IDs — null results expire after 2 minutes so we retry
 const videoIdCache = new Map<string, { id: string | null; ts: number }>();
 const VID_HIT_TTL  = 3600 * 1000 * 6; // 6h for found IDs
-const VID_MISS_TTL = 60 * 1000 * 3;   // 3min for misses
+const VID_MISS_TTL = 60 * 1000 * 2;   // 2min for misses
 
-async function fetchYouTubeId(artist: string, title: string, id: string): Promise<string | null> {
-  const cached = videoIdCache.get(id);
+// Track which video IDs have been tried and failed (for retry logic)
+const failedVideoIds = new Map<string, Set<string>>(); // songId → Set of failed ytVideoIds
+
+async function fetchYouTubeId(
+  artist: string,
+  title: string,
+  id: string,
+  excludeId?: string // skip a known-bad video ID
+): Promise<string | null> {
+  const cacheKey = excludeId ? `${id}::retry-${excludeId}` : id;
+  const cached = videoIdCache.get(cacheKey);
   if (cached) {
     const ttl = cached.id ? VID_HIT_TTL : VID_MISS_TTL;
     if (Date.now() - cached.ts < ttl) return cached.id;
   }
   try {
-    const res = await fetch(
-      `/api/ytid?artist=${encodeURIComponent(artist)}&title=${encodeURIComponent(title)}`,
-      { signal: AbortSignal.timeout(15000) }
-    );
+    const params = new URLSearchParams({
+      artist: artist,
+      title:  title,
+    });
+    if (excludeId) params.set("exclude", excludeId);
+    const res = await fetch(`/api/ytid?${params.toString()}`, {
+      signal: AbortSignal.timeout(15000),
+    });
     if (res.ok) {
       const data = await res.json();
-      videoIdCache.set(id, { id: data.videoId ?? null, ts: Date.now() });
+      videoIdCache.set(cacheKey, { id: data.videoId ?? null, ts: Date.now() });
       return data.videoId ?? null;
     }
   } catch { /* ignore */ }
-  videoIdCache.set(id, { id: null, ts: Date.now() });
+  videoIdCache.set(cacheKey, { id: null, ts: Date.now() });
   return null;
 }
 
@@ -313,6 +326,7 @@ interface PlayerContextValue {
   toggleShuffle: () => void;
   cycleRepeat:   () => void;
   toggleLyrics:  () => void;
+  retryYtId:   (excludeVideoId: string) => void;
   dispatch: React.Dispatch<Action>;
 }
 
@@ -559,6 +573,25 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
   const cycleRepeat  = useCallback(() => dispatch({ type: "CYCLE_REPEAT" }), []);
   const toggleLyrics = useCallback(() => dispatch({ type: "TOGGLE_LYRICS" }), []);
 
+  // Retry with a different video ID when the current one fails (region blocked, embed disabled, etc.)
+  const currentSongRef = useRef(currentSong);
+  useEffect(() => { currentSongRef.current = currentSong; }, [currentSong]);
+
+  const retryYtId = useCallback((excludeVideoId: string) => {
+    const song = currentSongRef.current;
+    if (!song) return;
+    dispatch({ type: "SET_YT_STATUS", payload: "loading" });
+    fetchYouTubeId(song.artistName, song.trackName, `${song.id}-retry`, excludeVideoId)
+      .then(id => {
+        if (id && id !== excludeVideoId) {
+          dispatch({ type: "SET_YT_VIDEO", payload: { videoId: id, status: "ready" } });
+        } else {
+          // No alternate found — skip to next
+          dispatch({ type: "NEXT" });
+        }
+      });
+  }, []);
+
   return (
     <PlayerContext.Provider value={{
       state, currentSong,
@@ -566,6 +599,7 @@ export function PlayerProvider({ children }: { children: React.ReactNode }) {
       togglePlay, next, prev,
       setVolume, seek,
       toggleShuffle, cycleRepeat, toggleLyrics,
+      retryYtId,
       dispatch,
     }}>
       {children}

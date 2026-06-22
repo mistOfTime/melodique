@@ -58,7 +58,7 @@ function safeCall<T>(player: YTPlayer | null, method: keyof YTPlayer, ...args: u
 const CROSSFADE_MS = 400;
 
 export default function YouTubePlayer() {
-  const { state, currentSong, next, dispatch } = usePlayer();
+  const { state, currentSong, next, retryYtId, dispatch } = usePlayer();
 
   const audioRef         = useRef<HTMLAudioElement | null>(null);
   const divRef           = useRef<HTMLDivElement>(null);
@@ -73,14 +73,18 @@ export default function YouTubePlayer() {
   const nextRef          = useRef(next);
   const isPlayingRef     = useRef(state.isPlaying);
   const intentionalPause = useRef(false);
+  const retryYtIdRef     = useRef(retryYtId);
 
   // Which source is currently active — ONLY one plays at a time
   const modeRef = useRef<"native" | "iframe">("iframe");
   // videoId currently being played — used to guard stale callbacks
   const activeVideoId = useRef<string | null>(null);
   const audioUrlCache = useRef<Map<string, string | null>>(new Map());
+  // How many retries attempted for current song (prevent infinite retry loop)
+  const retryCount = useRef(0);
 
   useEffect(() => { nextRef.current = next; }, [next]);
+  useEffect(() => { retryYtIdRef.current = retryYtId; }, [retryYtId]);
   useEffect(() => { isPlayingRef.current = state.isPlaying; }, [state.isPlaying]);
   useEffect(() => { targetVolume.current = state.volume; }, [state.volume]);
 
@@ -199,8 +203,15 @@ export default function YouTubePlayer() {
         onError: () => {
           if (modeRef.current !== "iframe") return;
           dispatch({ type: "SET_YT_STATUS", payload: "error" });
-          // Auto-skip — use activeVideoId ref to avoid stale closures
-          setTimeout(() => nextRef.current(), 800);
+          const failedId = activeVideoId.current;
+          // Try alternate video ID — max 2 retries per song before skipping
+          if (failedId && retryCount.current < 2) {
+            retryCount.current += 1;
+            retryYtIdRef.current(failedId);
+          } else {
+            retryCount.current = 0;
+            setTimeout(() => nextRef.current(), 600);
+          }
         },
       },
     });
@@ -216,6 +227,7 @@ export default function YouTubePlayer() {
     // Mark this as the active video
     activeVideoId.current = videoId;
     watchdogFired.current = false;
+    retryCount.current = 0;
 
     lastProgressSet.current = 0;
     dispatch({ type: "SET_PROGRESS", payload: 0 });
